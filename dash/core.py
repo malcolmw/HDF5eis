@@ -126,6 +126,29 @@ class Gather(object):
         return (df)
 
     @property
+    def datas(self):
+        """
+        Contained data as a obspy.Stream.
+        """
+        import obspy
+        stream = obspy.Stream()
+        for i, d in enumerate(self.data):
+            trace = obspy.Trace(
+                data=d.copy(),
+                header=dict(
+                    starttime=self.starttime,
+                    sampling_rate=self.sampling_rate,
+                    network="??",
+                    station=f"{i+1:04d}",
+                    location="??",
+                    channel="???"
+                )
+            )
+            stream.append(trace)
+
+        return (stream)
+
+    @property
     def endtime(self):
         """
         Time of last sample in self.data.
@@ -299,8 +322,24 @@ class Gather(object):
 
         return (True)
 
+
+    def write_binary(self, path, dtype=None):
+        """
+        Write data to `path` in raw binary format. Optionally cast
+        data to `dtype`.
+        """
+        d = self.data.flatten()
+        if dtype is not None and d.dtype != dtype:
+            d = d.astype(dtype)
+        with open(path, "wb") as outfile:
+            d.tofile(outfile)
+
+        return (True)
+
+
     def _write(self, path, **kwargs):
         """
+        DEPRECATED
         Write data to disk.
         """
         starttime = self.starttime.strftime("%Y-%m-%dT%H:%M:%S.%f")
