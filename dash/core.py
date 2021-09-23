@@ -3,15 +3,28 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pathlib
 import scipy.signal
 
 
 class HDF5DAS(h5py.File):
-    def __init__(self, *args, dtype=np.float32, **kwargs):
+    def __init__(self, *args, dtype=np.float32, safe_mode=True, **kwargs):
         """
         An h5py.File subclass for convenient I/O of DAS data.
         """
         self._dtype = dtype
+        if (
+            "mode" in kwargs
+            and kwargs["mode"] == "w"
+            and safe_mode is True
+            and pathlib.Path(args[0]).exists()
+        ):
+            raise (
+                ValueError(
+                    "File already exists! If you are sure you want to open it"
+                    " in write mode, use `safe_mode=False`."
+                )
+            )
         super(HDF5DAS, self).__init__(*args, **kwargs)
 
 
@@ -249,6 +262,17 @@ class Gather(object):
         nyq = self.sampling_rate / 2
         sos = scipy.signal.butter(horder, [locut/nyq, hicut/nyq], btype="bandpass", output="sos")
         self._data = scipy.signal.sosfiltfilt(sos, self.data)
+
+
+    def copy(self):
+        gather = Gather(
+            self.data.copy(),
+            self.starttime,
+            self.sampling_rate,
+            self.trace_idxs.copy()
+        )
+
+        return (gather)
 
 
     def decimate(self, factor):
