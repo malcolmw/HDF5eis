@@ -70,7 +70,7 @@ class HDF5eis(h5py.File):
             data_endtime = pd.to_datetime(data_endtime, utc=True)
             if starttime <= data_endtime and endtime >= data_starttime:
                 ds = grp[key]
-                sampling_rate = round(ds.attrs["sampling_rate"]*1e-6)
+                sampling_rate = ds.attrs["sampling_rate"]
                 istart = sample_index(starttime, data_starttime, sampling_rate)
                 iend   = sample_index(endtime, data_starttime, sampling_rate)
                 data = ds[traces, :, istart: iend]
