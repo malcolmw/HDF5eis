@@ -7,9 +7,10 @@ import pathlib
 import scipy.signal
 
 class HDF5eis(h5py.File):
+
     def __init__(self, *args, dtype=np.float32, safe_mode=True, **kwargs):
         """
-        An h5py.File subclass for convenient I/O of DAS data.
+        An h5py.File subclass for convenient I/O of big seismic data.
         """
         self._dtype = dtype
         if (
@@ -27,12 +28,16 @@ class HDF5eis(h5py.File):
         super(HDF5eis, self).__init__(*args, **kwargs)
 
 
+    def __str__(self):
+        return (_repr_group(self))
+
+
     @property
     def dtype(self):
         return (self._dtype)
 
 
-    def gather(self, starttime, endtime, traces=slice(None)):
+    def gather(self, starttime, endtime, tag, traces=slice(None)):
         """
         Return a dash.core.Gather object with data between *starttime*
         and *endtime*.
@@ -57,130 +62,28 @@ class HDF5eis(h5py.File):
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
-        # HACK
-        if "waveforms" not in self.keys():
-            grp = self
-        else:
-            grp = self["waveforms"]
-        ######
+        _tag = f"/waveforms/{tag}"
+        if _tag not in self:
+            raise (ValueError(f"Tag not found: {tag}."))
 
-        for key in grp.keys():
-            data_starttime, data_endtime = key.split("__")
+        for key in self[_tag]:
+            _, data_starttime, data_endtime = key.split("__")
             data_starttime = pd.to_datetime(data_starttime, utc=True)
             data_endtime = pd.to_datetime(data_endtime, utc=True)
             if starttime <= data_endtime and endtime >= data_starttime:
-                ds = grp[key]
-                sampling_rate = ds.attrs["sampling_rate"]
-                istart = sample_index(starttime, data_starttime, sampling_rate)
-                iend   = sample_index(endtime, data_starttime, sampling_rate)
-                data = ds[traces, :, istart: iend]
+                datas = self[f"{_tag}/{key}"]
+                sampling_rate = datas.attrs["sampling_rate"]
+                istart = _sample_idx(starttime, data_starttime, sampling_rate)
+                iend   = _sample_idx(endtime, data_starttime, sampling_rate)
+                data = datas[traces, ..., istart: iend]
                 starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
-                trace_idxs = np.arange(ds.shape[0])[traces]
+                trace_idxs = np.arange(datas.shape[0])[traces]
+
                 gather = Gather(data, starttime, sampling_rate, trace_idxs)
 
                 return (gather)
 
         raise(ValueError("Invalide time range specified."))
-
-    def write(self, gather, **kwargs):
-        """
-        Write data to disk.
-        """
-        starttime = gather.starttime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        endtime = gather.endtime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        ds = self.create_dataset(
-            f"waveforms/{starttime}__{endtime}",
-            data=gather.data,
-            dtype=self.dtype,
-            **kwargs
-        )
-        ds.attrs["starttime"] = starttime
-        ds.attrs["sampling_rate"] = gather.sampling_rate
-        ds.attrs["sample_interval"] = 1 / gather.sampling_rate
-
-class HDF5DAS(h5py.File):
-    def __init__(self, *args, dtype=np.float32, safe_mode=True, **kwargs):
-        """
-        An h5py.File subclass for convenient I/O of DAS data.
-        """
-        self._dtype = dtype
-        if (
-            "mode" in kwargs
-            and kwargs["mode"] == "w"
-            and safe_mode is True
-            and pathlib.Path(args[0]).exists()
-        ):
-            raise (
-                ValueError(
-                    "File already exists! If you are sure you want to open it"
-                    " in write mode, use `safe_mode=False`."
-                )
-            )
-        super(HDF5DAS, self).__init__(*args, **kwargs)
-
-
-    @property
-    def dtype(self):
-        return (self._dtype)
-
-
-    def gather(self, starttime, endtime, traces=slice(None)):
-        """
-        Return a dash.core.Gather object with data between *starttime*
-        and *endtime*.
-
-        Positional Arguments
-        ====================
-        starttime: int, float, str, datetime
-            Start time of desired time window.
-        endtime: int, float, str, datetime
-            End time of desired time window.
-
-        Keyword Arguments
-        =================
-        traces: list, slice
-            Indices of desired traces.
-
-        Returns
-        =======
-        gather: dash.core.Gather
-            Gather object containing desired data.
-        """
-        starttime = pd.to_datetime(starttime, utc=True)
-        endtime   = pd.to_datetime(endtime, utc=True)
-        for key in self["waveforms"].keys():
-            data_starttime, data_endtime = key.split("__")
-            data_starttime = pd.to_datetime(data_starttime, utc=True)
-            data_endtime = pd.to_datetime(data_endtime, utc=True)
-            if starttime <= data_endtime and endtime >= data_starttime:
-                ds = self[f"waveforms/{key}"]
-                sampling_rate = ds.attrs["sampling_rate"]
-                istart = sample_index(starttime, data_starttime, sampling_rate)
-                iend   = sample_index(endtime, data_starttime, sampling_rate)
-                data = ds[traces, istart: iend]
-                starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
-                trace_idxs = np.arange(ds.shape[0])[traces]
-                gather = Gather(data, starttime, sampling_rate, trace_idxs)
-
-                return (gather)
-
-        raise(ValueError("Invalide time range specified."))
-
-    def write(self, gather, **kwargs):
-        """
-        Write data to disk.
-        """
-        starttime = gather.starttime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        endtime = gather.endtime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        ds = self.create_dataset(
-            f"waveforms/{starttime}__{endtime}",
-            data=gather.data,
-            dtype=self.dtype,
-            **kwargs
-        )
-        ds.attrs["starttime"] = starttime
-        ds.attrs["sampling_rate"] = gather.sampling_rate
-        ds.attrs["sample_interval"] = 1 / gather.sampling_rate
 
 
 class Gather(object):
@@ -378,14 +281,22 @@ class Gather(object):
         """
         Demean data in place.
         """
-        self._data = self.data - np.atleast_2d(np.mean(self.data, axis=1)).T
+        if self._data.ndim == 3:
+            reshape = np.atleast_3d
+        else:
+            reshape = lambda x: np.transpose(np.atleast_2d(x))
+        self._data = self.data - reshape(np.mean(self.data, axis=-1))
 
 
     def normalize(self):
         """
         Normalize data in place.
         """
-        self._data = self.data / np.atleast_2d(np.max(np.abs(self.data), axis=1)).T
+        if self._data.ndim == 3:
+            reshape = np.atleast_3d
+        else:
+            reshape = lambda x: np.transpose(np.atleast_2d(x))
+        self._data = self.data / reshape(np.max(np.abs(self.data), axis=-1))
 
 
     def plot(self, domain="time", **kwargs):
@@ -576,13 +487,30 @@ def plot_fk_mask(f, k, mask, figsize=None, cmap=plt.get_cmap("plasma")):
     return (ax)
 
 
-def sample_index(time, starttime, sampling_rate, rounder=np.round):
+def _repr_group(group, indent=""):
+    s = ""
+    for key in group:
+        s += f"{indent}+--{key}\n"
+        if isinstance(group[key], h5py.Group):
+            s += _repr_group(group[key], indent=indent+"|--")
+    return (s)
+
+
+def _sample_idx(time, starttime, sampling_rate, right=False):
     """
-    Return the sampling index corresponding to the given time.
+    Get the index of a sample at a given time, relative to starttime.
     """
     time = pd.to_datetime(time, utc=True)
     delta = (time - starttime).total_seconds()
+
     if delta < 0:
+
         return (0)
+
     else:
-        return (np.uint(rounder(delta * sampling_rate)))
+        if right is True:
+            idx = int(np.ceil(delta * sampling_rate))
+        else:
+            idx = int(np.floor(delta * sampling_rate))
+
+    return (idx)
