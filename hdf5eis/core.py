@@ -125,12 +125,34 @@ class Gather(object):
         """
         Contained data as a pandas.DataFrame.
         """
-        df = pd.DataFrame(
-            self.data.T,
-            index=self.times,
-            columns=self.trace_idxs
-        )
-        return (df)
+
+        data = self.data
+
+        if data.ndim == 2:
+            dataf = pd.DataFrame(
+                data.T,
+                index=self.times,
+                columns=self.trace_idxs
+            )
+
+        elif data.ndim == 3:
+            nrec, nchan, nsamp = data.shape
+            rec = np.repeat(self.trace_idxs, nchan)
+            chan = np.tile(range(nchan), nrec)
+            columns = pd.MultiIndex.from_arrays(
+                (rec, chan),
+                names=("receiver", "channel")
+            )
+            dataf = pd.DataFrame(
+                data.reshape(-1, data.shape[-1]).T,
+                columns=columns,
+                index=self.times
+            )
+        else:
+            raise (NotImplementedError())
+
+        return(dataf)
+
 
     @property
     def datas(self):
@@ -312,32 +334,32 @@ class Gather(object):
 
             return (self._plot_fk_domain(**kwargs))
 
-    def sample_index(self, time, rounder=np.round):
+    def sample_idx(self, time, right=False):
         """
         Return the sampling index corresponding to the given time.
         """
         return (
-            sample_index(
-                time, self.starttime, self.sampling_rate, rounder=rounder
+            _sample_idx(
+                time, self.starttime, self.sampling_rate, right=right
             )
         )
 
 
-    def trim(self, starttime=None, endtime=None, lrounder=np.round, urounder=np.round):
+    def trim(self, starttime=None, endtime=None, right=False):
         """
         Trim data to desired start and endtime (in place).
         """
         if starttime is not None:
-            istart = self.sample_index(starttime, rounder=lrounder)
+            istart = self.sample_idx(starttime, right=right)
         else:
             istart = 0
 
         if endtime is not None:
-            iend   = self.sample_index(endtime, rounder=urounder)
+            iend   = self.sample_idx(endtime, right=right)
         else:
             iend = self.nsamples
 
-        self._data = self.data[:, istart: iend]
+        self._data = self.data[..., istart: iend]
         delta = pd.to_timedelta(istart / self.sampling_rate, unit="S")
         self._starttime = self.starttime + delta
 
