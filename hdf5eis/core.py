@@ -6,7 +6,7 @@ import pandas as pd
 import pathlib
 import scipy.signal
 
-class HDF5eis(h5py.File):
+class File(h5py.File):
 
     def __init__(self, *args, dtype=np.float32, safe_mode=True, **kwargs):
         """
@@ -25,7 +25,7 @@ class HDF5eis(h5py.File):
                     " in write mode, use `safe_mode=False`."
                 )
             )
-        super(HDF5eis, self).__init__(*args, **kwargs)
+        super(File, self).__init__(*args, **kwargs)
 
 
     def __str__(self):
@@ -321,14 +321,21 @@ class Gather(object):
         self._data = self.data / reshape(np.max(np.abs(self.data), axis=-1))
 
 
-    def plot(self, domain="time", **kwargs):
+    def plot(self, domain="time", type="DAS", **kwargs):
         """
         Plot data in time or fk domain.
         """
 
         if domain == "time":
 
-            return (self._plot_time_domain(**kwargs))
+            if type == "DAS":
+
+                return (self._plot_time_domain(**kwargs))
+
+            elif type == "geophone":
+
+                return (self._plot_geophone(**kwargs))
+
 
         elif domain == "fk":
 
@@ -466,6 +473,19 @@ class Gather(object):
         plt.tight_layout()
 
         return (ax)
+
+    def _plot_geophone(self):
+        fig, ax = plt.subplots()
+        for itrace, trace in enumerate(self.data[:, 0]):
+            ax.plot(trace + itrace, self.times, color="k", linewidth=1)
+
+        ax.set_xlabel("Trace index")
+        ax.set_ylim(self.times.min(), self.times.max())
+        ax.invert_yaxis()
+        locator = mpl.dates.AutoDateLocator()
+        ax.yaxis.set_major_locator(locator)
+        ax.yaxis.set_major_formatter(mpl.dates.ConciseDateFormatter(locator))
+        plt.tight_layout()
 
 
 def build_fk_notch_mask(k0, alpha, k, n):
