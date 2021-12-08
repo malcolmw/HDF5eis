@@ -13,7 +13,7 @@ def configure():
             "description": "Basic data storage, I/O, processing, and visualization for DAS data using HDF5 backend.",
             "download_url": "https://github.com/malcolmw/HDF5eis.git",
             "platforms": ["linux"],
-            "requires": ["numpy", "pandas", "scipy"],
+            "requires": ["h5py", "numpy", "pandas", "scipy"],
             "packages": ["hdf5eis"]
             }
     return(kwargs)
