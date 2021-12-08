@@ -73,6 +73,8 @@ class File(h5py.File):
             if starttime <= data_endtime and endtime >= data_starttime:
                 datas = self[f"{_tag}/{key}"]
                 sampling_rate = datas.attrs["sampling_rate"]
+                if isinstance(sampling_rate, np.ndarray):
+                    sampling_rate = sampling_rate[0]
                 istart = _sample_idx(starttime, data_starttime, sampling_rate)
                 iend   = _sample_idx(endtime, data_starttime, sampling_rate)
                 data = datas[traces, ..., istart: iend]
