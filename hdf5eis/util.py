@@ -9,6 +9,7 @@ def build_master(master, ddir):
 
     Returns True upon successful completion.
     """
+    ddir = pathlib.Path(ddir)
     with h5py.File(master, mode="w") as f5m:
         for path in list_files(ddir.joinpath("waveforms")):
             subpath = pathlib.Path(str(path).replace(str(ddir), ""))
