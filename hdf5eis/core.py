@@ -202,7 +202,20 @@ class Gather(object):
         Wavenumber coordinates of data in fk domain.
         """
         k = np.fft.fftfreq(self.ntraces)
+
         return (k)
+
+    @property
+    def norm_coeff(self):
+        """
+        Array of normalization constants.
+        """
+        if self._data.ndim == 3:
+            reshape = np.atleast_3d
+        else:
+            reshape = lambda x: np.transpose(np.atleast_2d(x))
+
+        return (reshape(np.max(np.abs(self.data), axis=-1)))
 
     @property
     def ntraces(self):
@@ -312,15 +325,21 @@ class Gather(object):
         self._data = self.data - reshape(np.mean(self.data, axis=-1))
 
 
-    def normalize(self):
+    def denormalize(self, norm):
+        """
+        Denormalize data in place.
+        """
+        self._data = self.data * norm
+
+
+    def normalize(self, norm_coeff=None):
         """
         Normalize data in place.
         """
-        if self._data.ndim == 3:
-            reshape = np.atleast_3d
-        else:
-            reshape = lambda x: np.transpose(np.atleast_2d(x))
-        self._data = self.data / reshape(np.max(np.abs(self.data), axis=-1))
+        if norm_coeff is None:
+            norm_coeff = self.norm_coeff
+
+        self._data = self.data / norm_coeff
 
 
     def plot(self, domain="time", type="DAS", **kwargs):
