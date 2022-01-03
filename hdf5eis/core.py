@@ -1,10 +1,47 @@
 import h5py
+import itertools
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import pandas as pd
 import pathlib
+import re
 import scipy.signal
+import warnings
+
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+
+
+
+def _filter(regex, iterable):
+    """
+    Filter an iterable based on regular expression matches.
+    """
+
+    return (filter(lambda key: re.match(regex, key), iterable))
+
+def _cascade(keys, iterable):
+    """
+    Cascade a set of regex filters for each level of /Waveforms/{tag}
+    """
+
+    if len(keys) == 0:
+        
+        return (iterable)
+    
+    return ([_cascade(keys[1:], iterable[key]) for key in _filter(keys[0], iterable)])
+
+def _flatten(iterable, n=1):
+    """
+    Flatten the complex-shaped return value of _cascade()
+    """
+
+    for i in range(n):
+        iterable = itertools.chain.from_iterable(iterable)
+
+    return (iterable)
+
 
 class File(h5py.File):
 
@@ -12,6 +49,8 @@ class File(h5py.File):
         """
         An h5py.File subclass for convenient I/O of big seismic data.
         """
+        self._init_args = args
+        self._init_kwargs = kwargs
         self._dtype = dtype
         if (
             "mode" in kwargs
@@ -35,11 +74,18 @@ class File(h5py.File):
     @property
     def dtype(self):
         return (self._dtype)
+    
+    @property
+    def index(self):
+        if not hasattr(self, "_index"):
+            self._index = pd.read_hdf(self.filename, key="/waveforms/_index")
+
+        return (self._index)
 
 
     def gather(self, starttime, endtime, tag, traces=slice(None)):
         """
-        Return a dash.core.Gather object with data between *starttime*
+        Return a hdf5eis.core.Gather object with data between *starttime*
         and *endtime*.
 
         Positional Arguments
@@ -62,31 +108,129 @@ class File(h5py.File):
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
-        _tag = f"/waveforms/{tag}"
-        if _tag not in self:
-            raise (ValueError(f"Tag not found: {tag}."))
+        index = self.index
+        index = index[index["tag"].str.fullmatch(tag)]
+        index = index[
+             (index["starttime"] < endtime)
+            &(index["endtime"] > starttime)
+        ]
+        index = index.sort_values("starttime")
 
-        for key in self[_tag]:
-            _, data_starttime, data_endtime = key.split("__")
-            data_starttime = pd.to_datetime(data_starttime, utc=True)
-            data_endtime = pd.to_datetime(data_endtime, utc=True)
-            if starttime <= data_endtime and endtime >= data_starttime:
-                datas = self[f"{_tag}/{key}"]
-                sampling_rate = datas.attrs["sampling_rate"]
+        if len(index) == 0:
+            raise (ValueError("No data found for specified tag and time range."))
+
+        sampling_interval = pd.to_timedelta(1 / index["sampling_rate"], unit="S")
+        delta = index["starttime"] - index.shift(1)["endtime"]
+
+        index["segment_id"] = (delta != sampling_interval).cumsum()
+        index = index.set_index("segment_id")
+        
+        gathers = list()
+
+        for segment_id in index.index.unique():
+            rows = index.loc[[segment_id]]
+            # There should be a check here to make sure the shape of each
+            # chunk is compatible.
+
+            # Make sure the sampling rate doesn't change mid stream.
+            assert len(rows["sampling_rate"].unique()) == 1
+
+            first_row      = rows.iloc[0]
+            last_row       = rows.iloc[-1]
+            sampling_rate  = first_row["sampling_rate"]
+            data_starttime = first_row["starttime"]
+            data_endtime   = last_row["endtime"]
+            istart         = _sample_idx(starttime, data_starttime, sampling_rate)
+            iend           = _sample_idx(
+                min(endtime, data_endtime),
+                data_starttime,
+                sampling_rate
+            ) + 1
+            nsamples       = iend - istart
+            offset         = pd.to_timedelta(istart / sampling_rate, unit="S")
+            first_sample   = data_starttime + offset
+            shape          = (*first_row["shape"][:-1], nsamples)
+            data           = np.empty(shape)
+            jstart         = 0
+            for _, row in rows.iterrows():
+                data_starttime = row["starttime"]
+                data_endtime   = row["endtime"]
+                tag            = row["tag"]
+                handle         = row["handle"]
+                istart = _sample_idx(starttime, data_starttime, sampling_rate)
+                iend   = _sample_idx(min(endtime, data_endtime), data_starttime, sampling_rate) + 1
+                datas = self["/".join(("waveforms", tag, handle))]
+                jend = jstart + (iend - istart)
+                data[..., jstart: jend] = datas[..., istart: iend]
+                jstart = jend
+
+            starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
+            trace_idxs = np.arange(data.shape[0])
+            gather = Gather(data, first_sample, sampling_rate, trace_idxs)
+            gathers.append(gather)
+            
+        if len(gathers) == 1:
+            return (gathers[0])
+        else:
+            return (gathers)
+
+        
+    def link_files(self, path, prefix=""):
+        """
+        Traverse the directory specified by `path` and create symbolic
+        links to all files.
+
+        Returns True upon successful completion.
+        """
+        ddir = pathlib.Path(path)
+        
+        for path in _list_files(ddir):
+            subpath = pathlib.Path(str(path).replace(str(ddir), ""))
+            group = str(subpath.parent)
+            with h5py.File(path, mode="r") as f5s:
+                for key in f5s:
+                    handle = "/".join(("/waveforms", prefix, group, key))
+                    self[handle] = h5py.ExternalLink(path, key)
+
+        self.update_index()
+
+        return (True)
+    
+    def update_index(self):
+
+        filename = self.filename
+        self.close()
+        
+        rows = list()
+
+        with h5py.File(filename, mode="r") as f5:
+            for path in _iter_group(f5["waveforms"]):
+                handle = path.split("/")[-1]
+                starttime = handle.split("__")[1]
+                tag = "/".join(path.split("/")[2:-1])
+                shape = f5[path].shape
+                sampling_rate = f5[path].attrs["sampling_rate"]
                 if isinstance(sampling_rate, np.ndarray):
                     sampling_rate = sampling_rate[0]
-                istart = _sample_idx(starttime, data_starttime, sampling_rate)
-                iend   = _sample_idx(endtime, data_starttime, sampling_rate)
-                data = datas[traces, ..., istart: iend]
-                starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
-                trace_idxs = np.arange(datas.shape[0])[traces]
+                row = (starttime, tag, handle, shape, sampling_rate)
+                rows.append(row)
+                
+        columns = ["starttime", "tag", "handle", "shape", "sampling_rate"]
+        dataf = pd.DataFrame(rows, columns=columns)
+        dataf["starttime"] = pd.to_datetime(dataf["starttime"])
+        sampling_interval = pd.to_timedelta(1 / dataf["sampling_rate"], unit="S")
+        nsamples = dataf["shape"].apply(pd.Series).iloc[:, -1]
+        dataf["endtime"] = dataf["starttime"] + sampling_interval * (nsamples - 1)
 
-                gather = Gather(data, starttime, sampling_rate, trace_idxs)
+        self._index = dataf
+        dataf.to_hdf(filename, key="/waveforms/_index")
+        
+        self._init_kwargs["mode"] = "r"
+        super(File, self).__init__(*self._init_args, **self._init_kwargs)
 
-                return (gather)
-
-        raise(ValueError("Invalide time range specified."))
-
+        return (True)
+        
+        
 
 class Gather(object):
 
@@ -548,6 +692,32 @@ def plot_fk_mask(f, k, mask, figsize=None, cmap=plt.get_cmap("plasma")):
     plt.tight_layout()
 
     return (ax)
+
+
+def _iter_group(group):
+    """
+    Return a list of all data sets in group. Skip special "_index" group.
+    """
+    
+    groups = list()
+    for key in group:
+        if key == "_index":
+            continue
+        elif isinstance(group[key], h5py.Group):
+            groups += _iter_group(group[key])
+        else:
+            groups.append("/".join((group.name, key)))
+
+    return (groups)
+
+
+def _list_files(path):
+    """
+    Generator of paths to all files in `path` and its subdirectories.
+    """
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            yield (pathlib.Path(root).joinpath(file))
 
 
 def _repr_group(group, indent=""):
