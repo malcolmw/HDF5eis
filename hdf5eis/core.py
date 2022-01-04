@@ -10,37 +10,7 @@ import re
 import scipy.signal
 import warnings
 
-warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
-
-
-
-def _filter(regex, iterable):
-    """
-    Filter an iterable based on regular expression matches.
-    """
-
-    return (filter(lambda key: re.match(regex, key), iterable))
-
-def _cascade(keys, iterable):
-    """
-    Cascade a set of regex filters for each level of /Waveforms/{tag}
-    """
-
-    if len(keys) == 0:
-        
-        return (iterable)
-    
-    return ([_cascade(keys[1:], iterable[key]) for key in _filter(keys[0], iterable)])
-
-def _flatten(iterable, n=1):
-    """
-    Flatten the complex-shaped return value of _cascade()
-    """
-
-    for i in range(n):
-        iterable = itertools.chain.from_iterable(iterable)
-
-    return (iterable)
+warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 
 class File(h5py.File):
@@ -49,12 +19,17 @@ class File(h5py.File):
         """
         An h5py.File subclass for convenient I/O of big seismic data.
         """
+        
+        if "mode" not in kwargs:
+            kwargs["mode"] = "r"
+        self._open_mode = kwargs["mode"]
+        
         self._init_args = args
         self._init_kwargs = kwargs
         self._dtype = dtype
+
         if (
-            "mode" in kwargs
-            and kwargs["mode"] == "w"
+            kwargs["mode"] == "w"
             and safe_mode is True
             and pathlib.Path(args[0]).exists()
         ):
@@ -64,6 +39,7 @@ class File(h5py.File):
                     " in write mode, use `safe_mode=False`."
                 )
             )
+
         super(File, self).__init__(*args, **kwargs)
 
 
@@ -81,6 +57,43 @@ class File(h5py.File):
             self._index = pd.read_hdf(self.filename, key="/waveforms/_index")
 
         return (self._index)
+    
+    def _set_mode(self, mode):
+        self.close()
+        
+        self._init_kwargs["mode"] = mode
+        super(File, self).__init__(*self._init_args, **self._init_kwargs)
+        
+        
+    def _reset_mode(self):
+        self.close()
+        
+        if self._open_mode in ("w", "w+"):
+            self._init_kwargs["mode"] = "a"
+        else:
+            self._init_kwargs["mode"] = self._open_mode
+
+        super(File, self).__init__(*self._init_args, **self._init_kwargs)
+        
+    
+    
+    def add_waveforms(self, data, starttime, sampling_rate, tag="", **kwargs):
+        sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
+        nsamples = data.shape[-1]
+        starttime = pd.to_datetime(starttime)
+        endtime = starttime + sampling_interval * (nsamples - 1)
+        ts = starttime.strftime("%Y%m%dT%H:%M:%S.%fZ")
+        te = endtime.strftime("%Y%m%dT%H:%M:%S.%fZ")
+        handle = "/".join(("waveforms", tag, f"__{ts}__{te}"))
+        handle = re.sub("//+", "/", handle)
+        datas = self.create_dataset(
+            handle,
+            data=data,
+            **kwargs
+        )
+        datas.attrs["sampling_rate"] = sampling_rate
+            
+        return (True)
 
 
     def gather(self, starttime, endtime, tag, traces=slice(None)):
@@ -105,6 +118,7 @@ class File(h5py.File):
         gather: dash.core.Gather
             Gather object containing desired data.
         """
+        
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
@@ -163,7 +177,7 @@ class File(h5py.File):
                 jend = jstart + (iend - istart)
                 data[..., jstart: jend] = datas[..., istart: iend]
                 jstart = jend
-
+ 
             starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
             trace_idxs = np.arange(data.shape[0])
             gather = Gather(data, first_sample, sampling_rate, trace_idxs)
@@ -177,56 +191,106 @@ class File(h5py.File):
         
     def link_files(self, path, prefix=""):
         """
+        ***Deprecated.***
+        
         Traverse the directory specified by `path` and create symbolic
         links to all files.
 
         Returns True upon successful completion.
         """
+
         ddir = pathlib.Path(path)
         
         for path in _list_files(ddir):
             subpath = pathlib.Path(str(path).replace(str(ddir), ""))
             group = str(subpath.parent)
-            with h5py.File(path, mode="r") as f5s:
-                for key in f5s:
-                    handle = "/".join(("/waveforms", prefix, group, key))
-                    self[handle] = h5py.ExternalLink(path, key)
+            try:
+                with h5py.File(path, mode="r") as f5s:
+                    for key in f5s["/waveforms"]:
+                        handle = "/".join(("/waveforms", prefix, group, key))
+                        self[handle] = h5py.ExternalLink(path, key)
+            except PermissionError:
+                print(f"Warning: Could not read file {path}")
 
         self.update_index()
 
         return (True)
     
+    def link_data(self, path, prefix="", suffix=""):
+        """
+        Traverse the directory specified by `path` and create symbolic
+        links to all contained data sets.
+
+        Returns True upon successful completion.
+        """
+
+        root = pathlib.Path(path)
+        
+        if root.is_file():
+            self._link_file(root, root.parent, prefix=prefix, suffix=suffix)
+        
+        else:        
+            for path in _list_files(root):
+                try:
+                    self._link_file(path, root, prefix=prefix, suffix=suffix)
+                except:
+                    print(path)
+
+        self.update_index()
+
+        return (True)
+
+
+    def _link_data_set(self, datas, path, root, prefix="", suffix=""):
+        tag = "/".join((
+            "/waveforms",
+            prefix,
+            str(path.parent).removeprefix(str(root)),
+            datas.parent.name.removeprefix("/waveforms"),
+            suffix,
+        ))
+        tag = re.sub("//+", "/", tag)
+        basename = datas.name.split("/")[-1]
+        handle = str(pathlib.Path(tag, basename))
+        self[handle] = h5py.ExternalLink(path, datas.name)
+
+
+    def _link_file(self, path, root, prefix="", suffix=""):
+        with h5py.File(path, mode="r") as f5s:
+            for handle in _iter_group(f5s["/waveforms"]):
+                datas = f5s[handle]
+                self._link_data_set(datas, path, root, prefix=prefix, suffix=suffix)
+    
     def update_index(self):
 
-        filename = self.filename
-        self.close()
-        
+        self._set_mode("r")
+
         rows = list()
 
-        with h5py.File(filename, mode="r") as f5:
-            for path in _iter_group(f5["waveforms"]):
-                handle = path.split("/")[-1]
-                starttime = handle.split("__")[1]
-                tag = "/".join(path.split("/")[2:-1])
-                shape = f5[path].shape
-                sampling_rate = f5[path].attrs["sampling_rate"]
-                if isinstance(sampling_rate, np.ndarray):
-                    sampling_rate = sampling_rate[0]
-                row = (starttime, tag, handle, shape, sampling_rate)
-                rows.append(row)
-                
+        for path in _iter_group(self["/waveforms"]):
+            handle = path.split("/")[-1]
+            starttime = handle.split("__")[1]
+            tag = "/".join(path.split("/")[2:-1])
+            shape = self[path].shape
+            sampling_rate = self[path].attrs["sampling_rate"]
+            if isinstance(sampling_rate, np.ndarray):
+                sampling_rate = sampling_rate[0]
+            row = (starttime, tag, handle, shape, sampling_rate)
+            rows.append(row)
+
         columns = ["starttime", "tag", "handle", "shape", "sampling_rate"]
         dataf = pd.DataFrame(rows, columns=columns)
         dataf["starttime"] = pd.to_datetime(dataf["starttime"])
         sampling_interval = pd.to_timedelta(1 / dataf["sampling_rate"], unit="S")
-        nsamples = dataf["shape"].apply(pd.Series).iloc[:, -1]
+        nsamples = dataf["shape"].apply(lambda x: x[-1])
         dataf["endtime"] = dataf["starttime"] + sampling_interval * (nsamples - 1)
 
         self._index = dataf
+        filename = self.filename
+        self.close()
         dataf.to_hdf(filename, key="/waveforms/_index")
-        
-        self._init_kwargs["mode"] = "r"
-        super(File, self).__init__(*self._init_args, **self._init_kwargs)
+
+        self._reset_mode()
 
         return (True)
         
@@ -536,9 +600,11 @@ class Gather(object):
         self._starttime = self.starttime + delta
 
 
-    def write(self, path, **kwargs):
-        with HDF5DAS(path, mode="w") as f5:
-            f5.write(self, **kwargs)
+    def write(self, path, tag="", **kwargs):
+        path = pathlib.Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with File(path, mode="a") as f5:
+            f5.add_waveforms(self.data, self.starttime, self.sampling_rate, tag=tag, **kwargs)
 
         return (True)
 
@@ -698,7 +764,6 @@ def _iter_group(group):
     """
     Return a list of all data sets in group. Skip special "_index" group.
     """
-    
     groups = list()
     for key in group:
         if key == "_index":
