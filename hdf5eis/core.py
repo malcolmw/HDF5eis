@@ -19,11 +19,11 @@ class File(h5py.File):
         """
         An h5py.File subclass for convenient I/O of big seismic data.
         """
-        
+
         if "mode" not in kwargs:
             kwargs["mode"] = "r"
         self._open_mode = kwargs["mode"]
-        
+
         self._init_args = args
         self._init_kwargs = kwargs
         self._dtype = dtype
@@ -50,33 +50,38 @@ class File(h5py.File):
     @property
     def dtype(self):
         return (self._dtype)
-    
+
     @property
     def index(self):
         if not hasattr(self, "_index"):
             self._index = pd.read_hdf(self.filename, key="/waveforms/_index")
 
         return (self._index)
-    
+
+    @property
+    def tags(self):
+
+        return (self.index["tag"].unique())
+
     def _set_mode(self, mode):
         self.close()
-        
+
         self._init_kwargs["mode"] = mode
         super(File, self).__init__(*self._init_args, **self._init_kwargs)
-        
-        
+
+
     def _reset_mode(self):
         self.close()
-        
+
         if self._open_mode in ("w", "w+"):
             self._init_kwargs["mode"] = "a"
         else:
             self._init_kwargs["mode"] = self._open_mode
 
         super(File, self).__init__(*self._init_args, **self._init_kwargs)
-        
-    
-    
+
+
+
     def add_waveforms(self, data, starttime, sampling_rate, tag="", **kwargs):
         sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
         nsamples = data.shape[-1]
@@ -92,7 +97,7 @@ class File(h5py.File):
             **kwargs
         )
         datas.attrs["sampling_rate"] = sampling_rate
-            
+
         return (True)
 
 
@@ -118,7 +123,7 @@ class File(h5py.File):
         gather: dash.core.Gather
             Gather object containing desired data.
         """
-        
+
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
@@ -138,7 +143,7 @@ class File(h5py.File):
 
         index["segment_id"] = (delta != sampling_interval).cumsum()
         index = index.set_index("segment_id")
-        
+
         gathers = list()
 
         for segment_id in index.index.unique():
@@ -177,22 +182,22 @@ class File(h5py.File):
                 jend = jstart + (iend - istart)
                 data[..., jstart: jend] = datas[..., istart: iend]
                 jstart = jend
- 
+
             starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
             trace_idxs = np.arange(data.shape[0])
             gather = Gather(data, first_sample, sampling_rate, trace_idxs)
             gathers.append(gather)
-            
+
         if len(gathers) == 1:
             return (gathers[0])
         else:
             return (gathers)
 
-        
+
     def link_files(self, path, prefix=""):
         """
         ***Deprecated.***
-        
+
         Traverse the directory specified by `path` and create symbolic
         links to all files.
 
@@ -200,7 +205,7 @@ class File(h5py.File):
         """
 
         ddir = pathlib.Path(path)
-        
+
         for path in _list_files(ddir):
             subpath = pathlib.Path(str(path).replace(str(ddir), ""))
             group = str(subpath.parent)
@@ -215,7 +220,7 @@ class File(h5py.File):
         self.update_index()
 
         return (True)
-    
+
     def link_data(self, path, prefix="", suffix=""):
         """
         Traverse the directory specified by `path` and create symbolic
@@ -225,12 +230,12 @@ class File(h5py.File):
         """
 
         root = pathlib.Path(path)
-        
+
         if root.is_file():
             self._link_file(root, root.parent, prefix=prefix, suffix=suffix)
-        
-        else:        
-            for path in _list_files(root):
+
+        else:
+            for path in sorted(_list_files(root)):
                 try:
                     self._link_file(path, root, prefix=prefix, suffix=suffix)
                 except:
@@ -260,7 +265,7 @@ class File(h5py.File):
             for handle in _iter_group(f5s["/waveforms"]):
                 datas = f5s[handle]
                 self._link_data_set(datas, path, root, prefix=prefix, suffix=suffix)
-    
+
     def update_index(self):
 
         self._set_mode("r")
@@ -293,8 +298,8 @@ class File(h5py.File):
         self._reset_mode()
 
         return (True)
-        
-        
+
+
 
 class Gather(object):
 
