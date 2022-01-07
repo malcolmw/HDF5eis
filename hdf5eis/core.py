@@ -236,10 +236,7 @@ class File(h5py.File):
 
         else:
             for path in sorted(_list_files(root)):
-                try:
-                    self._link_file(path, root, prefix=prefix, suffix=suffix)
-                except:
-                    print(path)
+                self._link_file(path, root, prefix=prefix, suffix=suffix)
 
         self.update_index()
 
@@ -771,10 +768,11 @@ def _iter_group(group):
     """
     groups = list()
     for key in group:
-        if key == "_index":
-            continue
-        elif isinstance(group[key], h5py.Group):
-            groups += _iter_group(group[key])
+        if isinstance(group[key], h5py.Group):
+            if key[0] == "_":
+                continue
+            else:
+                groups += _iter_group(group[key])
         else:
             groups.append("/".join((group.name, key)))
 
