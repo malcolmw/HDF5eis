@@ -50,18 +50,35 @@ class File(h5py.File):
     @property
     def dtype(self):
         return (self._dtype)
+    
+    
+    @property
+    def metadata_index(self):
+        if not hasattr(self, "_metadata_index"):
+            try:
+                self._metadata_index = pd.read_hdf(self.filename, key="/metadata/_index")
+            except KeyError:
+                self._metadata_index = None
+
+        return (self._metadata_index)
+
 
     @property
-    def index(self):
-        if not hasattr(self, "_index"):
-            self._index = pd.read_hdf(self.filename, key="/waveforms/_index")
+    def wf_index(self):
+        if not hasattr(self, "_wf_index"):
+            try:
+                self._wf_index = pd.read_hdf(self.filename, key="/waveforms/_index")
+            except KeyError:
+                self._wf_index = None
 
-        return (self._index)
+        return (self._wf_index)
+
 
     @property
-    def tags(self):
+    def wf_tags(self):
 
-        return (self.index["tag"].unique())
+        return (self.wf_index["tag"].unique())
+
 
     def _set_mode(self, mode):
         self.close()
@@ -127,7 +144,12 @@ class File(h5py.File):
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
-        index = self.index
+        index = self.wf_index
+        
+        if index is None:
+            print("No waveforms found.")
+            return (None)
+        
         index = index[index["tag"].str.fullmatch(tag)]
         index = index[
              (index["starttime"] < endtime)
@@ -192,34 +214,7 @@ class File(h5py.File):
             return (gathers[0])
         else:
             return (gathers)
-
-
-    def link_files(self, path, prefix=""):
-        """
-        ***Deprecated.***
-
-        Traverse the directory specified by `path` and create symbolic
-        links to all files.
-
-        Returns True upon successful completion.
-        """
-
-        ddir = pathlib.Path(path)
-
-        for path in _list_files(ddir):
-            subpath = pathlib.Path(str(path).replace(str(ddir), ""))
-            group = str(subpath.parent)
-            try:
-                with h5py.File(path, mode="r") as f5s:
-                    for key in f5s["/waveforms"]:
-                        handle = "/".join(("/waveforms", prefix, group, key))
-                        self[handle] = h5py.ExternalLink(path, key)
-            except PermissionError:
-                print(f"Warning: Could not read file {path}")
-
-        self.update_index()
-
-        return (True)
+        
 
     def link_data(self, path, prefix="", suffix=""):
         """
@@ -238,34 +233,84 @@ class File(h5py.File):
             for path in sorted(_list_files(root)):
                 self._link_file(path, root, prefix=prefix, suffix=suffix)
 
-        self.update_index()
+        self.update_wf_index()
 
         return (True)
 
 
-    def _link_data_set(self, datas, path, root, prefix="", suffix=""):
-        tag = "/".join((
-            "/waveforms",
+    def _link_object(self, obj, path, root, prefix="", suffix=""):
+        dtype = f"/{obj.name.split('/')[1]}"
+        parent_dir = str(path.parent).removeprefix(str(root)).removeprefix(dtype)
+        parent_grp = obj.parent.name.removeprefix(dtype)
+        basename = obj.name.split("/")[-1]
+        handle = "/".join((
+            dtype,
             prefix,
-            str(path.parent).removeprefix(str(root)),
-            datas.parent.name.removeprefix("/waveforms"),
+            parent_dir,
+            parent_grp,
             suffix,
+            basename
         ))
-        tag = re.sub("//+", "/", tag)
-        basename = datas.name.split("/")[-1]
-        handle = str(pathlib.Path(tag, basename))
-        self[handle] = h5py.ExternalLink(path, datas.name)
+        handle = re.sub("//+", "/", handle)
+        self[handle] = h5py.ExternalLink(path, obj.name)
 
 
     def _link_file(self, path, root, prefix="", suffix=""):
+        
         with h5py.File(path, mode="r") as f5s:
-            for handle in _iter_group(f5s["/waveforms"]):
-                datas = f5s[handle]
-                self._link_data_set(datas, path, root, prefix=prefix, suffix=suffix)
+            for dtype in f5s:
+                assert dtype in ("waveforms", "metadata", "products")
+                handles = _iter_group(f5s[dtype])
+                # If the data are Frame data, then strip off the last
+                # piece of the path.
+                if dtype in ("metadata", "products"):
+                    handles = set([
+                        str(pathlib.Path(p).parent) for p in handles
+                    ])
+                for handle in sorted(handles):
+                    self._link_object(
+                        f5s[handle], 
+                        path, 
+                        root, 
+                        prefix=prefix, 
+                        suffix=suffix
+                    )
 
-    def update_index(self):
+    def update_metadata_index(self):
+        
+        self._set_mode("r")
+
+        rows = list()
+
+        handles = _iter_group(self["/metadata"])
+        handles = set([
+            str(pathlib.Path(p).parent) for p in handles
+        ])
+        for path in sorted(handles):
+            tag = "/".join(path.split("/")[2:])
+            row = (tag,)
+            rows.append(row)
+
+        columns = ["tag"]
+        dataf = pd.DataFrame(rows, columns=columns)
+
+        self._metadata_index = dataf
+        
+        filename = self.filename
+        self.close()
+        dataf.to_hdf(filename, key="/metadata/_index")
+
+        self._reset_mode()
+
+        return (True)
+
+    def update_wf_index(self):
 
         self._set_mode("r")
+        
+        if "waveforms" not in self:
+            print("No waveforms found. Not updating waveform index.")
+            return (None)
 
         rows = list()
 
