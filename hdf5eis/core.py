@@ -1,124 +1,339 @@
 import h5py
-import itertools
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
 import pathlib
 import re
-import scipy.signal
 import warnings
 
-warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
+# Local module import
+import gather
+
+warnings.simplefilter(
+    action="ignore",
+    category=pd.errors.PerformanceWarning
+)
+
+WF_INDEX_COLUMNS = [
+    "tag",
+    "starttime",
+    "endtime",
+    "sampling_rate",
+    "shape"
+]
 
 
-class File(h5py.File):
-
-    def __init__(self, *args, dtype=np.float32, safe_mode=True, **kwargs):
+class File(h5py.File,object):
+    def __init__(self, *args, overwrite=False, **kwargs):
         """
-        An h5py.File subclass for convenient I/O of big seismic data.
+        An h5py.File subclass for convenient I/O of big, multidimensional
+        data from environmental sensors.
         """
 
         if "mode" not in kwargs:
             kwargs["mode"] = "r"
+
         self._open_mode = kwargs["mode"]
 
         self._init_args = args
-        self._init_kwargs = kwargs
-        self._dtype = dtype
+        self._init_kwargs = kwargs.copy()
+        self._init_kwargs["mode"] = "r" if self._init_kwargs["mode"] == "r" else "r+"
 
         if (
             kwargs["mode"] == "w"
-            and safe_mode is True
+            and overwrite is False
             and pathlib.Path(args[0]).exists()
         ):
             raise (
                 ValueError(
                     "File already exists! If you are sure you want to open it"
-                    " in write mode, use `safe_mode=False`."
+                    " in write mode, use `overwrite=True`."
                 )
             )
 
         super(File, self).__init__(*args, **kwargs)
 
 
-    def __str__(self):
-        return (_repr_group(self))
 
 
     @property
-    def dtype(self):
-        return (self._dtype)
-    
-    
-    @property
-    def metadata_index(self):
-        if not hasattr(self, "_metadata_index"):
-            try:
-                self._metadata_index = pd.read_hdf(self.filename, key="/metadata/_index")
-            except KeyError:
-                self._metadata_index = None
+    def metadata(self):
+        if not hasattr(self, "_metadata"):
+            self._metadata = AuxiliaryAccessor(self, "/metadata")
 
-        return (self._metadata_index)
-
+        return (self._metadata)
 
     @property
-    def wf_index(self):
-        if not hasattr(self, "_wf_index"):
-            try:
-                self._wf_index = pd.read_hdf(self.filename, key="/waveforms/_index")
-            except KeyError:
-                self._wf_index = None
+    def products(self):
+        if not hasattr(self, "_products"):
+            self._products = AuxiliaryAccessor(self, "/products")
 
-        return (self._wf_index)
-
+        return (self._products)
 
     @property
-    def wf_tags(self):
+    def waveforms(self):
+        if not hasattr(self, "_waveforms"):
+            self._waveforms = WaveformAccessor(self, "/waveforms")
 
-        return (self.wf_index["tag"].unique())
+        return (self._waveforms)
 
 
-    def _set_mode(self, mode):
-        self.close()
+    def list_datasets(self, group=None):
+        """
+        Return a list of all data sets in group. Skip special "_index" group.
+        """
+        if group is None:
+            group = self
+        elif isinstance(group, str):
+            group = self[group]
 
-        self._init_kwargs["mode"] = mode
+        groups = list()
+        for key in group:
+            if isinstance(group[key], h5py.Group):
+                if key == "index":
+                    continue
+                else:
+                    groups += self.list_datasets(group=group[key])
+            else:
+                if group.name.split("/")[1] in ("products", "metadata"):
+                    if group.name not in groups:
+                        groups.append(group.name)
+                else:
+                    groups.append("/".join((group.name, key)))
+
+        return (groups)
+
+
+    def reopen(self):
+        """
+        Reopen the HDF5 file.
+
+        Opens in "r+" mode if object was instantiated with write permissions.
+        Opens in "r" mode otherwise.
+        """
+
         super(File, self).__init__(*self._init_args, **self._init_kwargs)
 
 
-    def _reset_mode(self):
-        self.close()
+class AccessorBase(object):
+    def __init__(self, parent, root):
+        self._parent = parent
+        self._root = root
 
-        if self._open_mode in ("w", "w+"):
-            self._init_kwargs["mode"] = "a"
+
+    @property
+    def parent(self):
+        return (self._parent)
+
+
+    @property
+    def root(self):
+        return (self._parent.require_group(self._root))
+
+
+    def add(self, dataf, key):
+        """
+        Add `dataf` to the appropriate group of the open file under `key`.
+        """
+        key = "/".join((self.root.name, key))
+        filename = self.parent.file.filename
+        self.parent.close()
+        try:
+            dataf.to_hdf(filename, key=key)
+        finally:
+            self.parent.reopen()
+
+
+    def link(self, src_file, src_path, key):
+        self.root[key] = h5py.ExternalLink(src_file, src_path)
+
+
+class AuxiliaryAccessor(AccessorBase, object):
+    def __getitem__(self, key):
+        """
+        Read the item under `key` from this group.
+        """
+
+        obj = self.root[key]
+        dtype = obj.attrs["type"]
+
+        if dtype == "TABLE":
+            return (self._read_table(obj))
+        elif dtype == "UTF-8":
+            return (obj[0].decode())
         else:
-            self._init_kwargs["mode"] = self._open_mode
-
-        super(File, self).__init__(*self._init_args, **self._init_kwargs)
+            raise (HDF5eisFileFormatError(f"Unknown data type {dtype} for key {key}."))
 
 
+    def add(self, obj, key):
+        """
+        Add `dataf` to the appropriate group of the open file under `key`.
+        """
+        if isinstance(obj, pd.DataFrame):
+            self._add_table(obj, key)
+        elif isinstance(obj, str):
+            self._add_utf8(obj, key)
 
-    def add_waveforms(self, data, starttime, sampling_rate, tag="", **kwargs):
-        sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
-        nsamples = data.shape[-1]
-        starttime = pd.to_datetime(starttime)
-        endtime = starttime + sampling_interval * (nsamples - 1)
-        ts = starttime.strftime("%Y%m%dT%H:%M:%S.%fZ")
-        te = endtime.strftime("%Y%m%dT%H:%M:%S.%fZ")
-        handle = "/".join(("waveforms", tag, f"__{ts}__{te}"))
+    def _add_table(self, dataf, key):
+        filename = self.parent.file.filename
+        pkey = "/".join((self.root.name, key)) # Key in parent
+        self.parent.close()
+        try:
+            dataf.to_hdf(filename, key=pkey)
+        finally:
+            self.parent.reopen()
+        self.root[key].attrs["type"] = "TABLE"
+
+
+    def _add_utf8(self, data, key):
+        self.root.create_dataset(
+            key,
+            data=[data],
+            dtype=h5py.string_dtype(encoding='utf-8')
+        )
+        self.root[key].attrs["type"] = "UTF-8"
+
+
+    def _read_table(self, group):
+        filename = group.file.filename
+        key = group.name
+
+        if filename == self.parent.file.filename:
+            self.parent.close()
+            try:
+                dataf = pd.read_hdf(filename, key)
+            except h5py.HDF5ExtError as err:
+                raise (err)
+            finally:
+                self.parent.reopen()
+        else:
+            group.file.close()
+            dataf = pd.read_hdf(filename, key)
+
+        return (dataf)
+
+
+    def link(self, src_file, src_path, key):
+        self.root[key] = h5py.ExternalLink(src_file, src_path)
+
+
+class HDF5eisFileFormatError(Exception):
+    pass
+
+
+class WaveformAccessor(AccessorBase, object):
+    @property
+    def index(self):
+        if not hasattr(self, "_index"):
+            filename = self.parent.file.filename
+            self.parent.close()
+            try:
+                # Try to read from disk first.
+                index =  pd.read_hdf(filename, key="/waveforms/index")
+            except KeyError:
+                # Initialize with empty DataFrame if nothing found on disk.
+                index = pd.DataFrame()
+            finally:
+                self.parent.reopen()
+
+            self._index = index
+
+        return (self._index)
+
+
+    @index.setter
+    def index(self, value):
+        self._index = value
+
+
+    def strftime(self, time):
+        """
+        Return a formatted string representation of `time`.
+        """
+        return (time.strftime("%Y%m%dT%H:%M:%S.%fZ"))
+
+
+    def handle(self, tag, starttime, endtime):
+        """
+        Returns a properly formatted reference to data specified by
+        `tag`, `starttime`, and `endtime`.
+        """
+        ts = self.strftime(starttime)
+        te = self.strftime(endtime)
+        handle = "/".join((tag, f"__{ts}__{te}"))
         handle = re.sub("//+", "/", handle)
+
+        return (handle)
+
+
+    def add(self, data, starttime, sampling_rate, tag="", flush_index=True, **kwargs):
+        """
+        Add waveforms to the parent HDF5 file.
+        """
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = data.dtype
+
         datas = self.create_dataset(
-            handle,
-            data=data,
+            data.shape,
+            starttime,
+            sampling_rate,
+            tag=tag,
+            flush_index=flush_index,
             **kwargs
         )
-        datas.attrs["sampling_rate"] = sampling_rate
+
+        datas[:] = data
 
         return (True)
 
 
-    def gather(self, starttime, endtime, tag, traces=slice(None)):
+    def create_dataset(self, shape, starttime, sampling_rate, tag="", flush_index=True, **kwargs):
+        """
+        Returns an empty dataset.
+        """
+        sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
+        nsamples = shape[-1]
+        starttime = pd.to_datetime(starttime)
+        endtime = starttime + sampling_interval * (nsamples - 1)
+        handle = self.handle(tag, starttime, endtime)
+        datas = self.root.create_dataset(
+            handle,
+            shape=shape,
+            **kwargs
+        )
+        datas.attrs["sampling_rate"] = sampling_rate
+
+        row = pd.DataFrame(
+            [[tag, starttime, endtime, sampling_rate, shape]],
+            columns=WF_INDEX_COLUMNS,
+        )
+        self.index = pd.concat([self.index, row], ignore_index=True)
+        if flush_index is True:
+            self.flush_index()
+
+        return (self.root[handle])
+
+
+    def flush_index(self, reopen=True):
+        filename = self.parent.file.filename
+        self.parent.close()
+        self.index.to_hdf(filename, key="/waveforms/index")
+        self.parent.reopen()
+
+
+    def link(self, src_file, tag=None):
+        with File(src_file, mode="r") as f5:
+            keys = f5.list_datasets(group="/waveforms")
+            index = f5.waveforms.index
+
+        self.root[tag] = h5py.ExternalLink(src_file, "/waveforms")
+
+        sep = "" if tag is None else "/"
+        index["tag"] = tag + sep + index["tag"]
+
+        self.index = pd.concat([self.index, index], ignore_index=True)
+
+
+    def read(self, tag, starttime, endtime):
         """
         Return a hdf5eis.core.Gather object with data between *starttime*
         and *endtime*.
@@ -137,20 +352,21 @@ class File(h5py.File):
 
         Returns
         =======
-        gather: dash.core.Gather
+        gather: hdf5eis.core.Gather
             Gather object containing desired data.
         """
 
         starttime = pd.to_datetime(starttime, utc=True)
         endtime   = pd.to_datetime(endtime, utc=True)
 
-        index = self.wf_index
-        
+        index = self.index
+
         if index is None:
             print("No waveforms found.")
             return (None)
-        
+
         index = index[index["tag"].str.fullmatch(tag)]
+
         index = index[
              (index["starttime"] < endtime)
             &(index["endtime"] > starttime)
@@ -197,651 +413,60 @@ class File(h5py.File):
                 data_starttime = row["starttime"]
                 data_endtime   = row["endtime"]
                 tag            = row["tag"]
-                handle         = row["handle"]
+                handle = self.handle(tag, data_starttime, data_endtime)
                 istart = _sample_idx(starttime, data_starttime, sampling_rate)
                 iend   = _sample_idx(min(endtime, data_endtime), data_starttime, sampling_rate) + 1
-                datas = self["/".join(("waveforms", tag, handle))]
-                jend = jstart + (iend - istart)
-                data[..., jstart: jend] = datas[..., istart: iend]
+                jend   = jstart + (iend - istart)
+                data[..., jstart: jend] = self.root[handle][..., istart: iend]
                 jstart = jend
 
             starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
             trace_idxs = np.arange(data.shape[0])
-            gather = Gather(data, first_sample, sampling_rate, trace_idxs)
-            gathers.append(gather)
+            gathers.append(
+                gather.Gather(data, first_sample, sampling_rate, trace_idxs)
+            )
 
         if len(gathers) == 1:
             return (gathers[0])
         else:
             return (gathers)
-        
 
-    def link_data(self, path, prefix="", suffix=""):
-        """
-        Traverse the directory specified by `path` and create symbolic
-        links to all contained data sets.
 
-        Returns True upon successful completion.
-        """
-
-        root = pathlib.Path(path)
-
-        if root.is_file():
-            self._link_file(root, root.parent, prefix=prefix, suffix=suffix)
-
-        else:
-            for path in sorted(_list_files(root)):
-                self._link_file(path, root, prefix=prefix, suffix=suffix)
-
-        self.update_wf_index()
-
-        return (True)
-
-
-    def _link_object(self, obj, path, root, prefix="", suffix=""):
-        dtype = f"/{obj.name.split('/')[1]}"
-        parent_dir = str(path.parent).removeprefix(str(root)).removeprefix(dtype)
-        parent_grp = obj.parent.name.removeprefix(dtype)
-        basename = obj.name.split("/")[-1]
-        handle = "/".join((
-            dtype,
-            prefix,
-            parent_dir,
-            parent_grp,
-            suffix,
-            basename
-        ))
-        handle = re.sub("//+", "/", handle)
-        self[handle] = h5py.ExternalLink(path, obj.name)
-
-
-    def _link_file(self, path, root, prefix="", suffix=""):
-        
-        with h5py.File(path, mode="r") as f5s:
-            for dtype in f5s:
-                assert dtype in ("waveforms", "metadata", "products")
-                handles = _iter_group(f5s[dtype])
-                # If the data are Frame data, then strip off the last
-                # piece of the path.
-                if dtype in ("metadata", "products"):
-                    handles = set([
-                        str(pathlib.Path(p).parent) for p in handles
-                    ])
-                for handle in sorted(handles):
-                    self._link_object(
-                        f5s[handle], 
-                        path, 
-                        root, 
-                        prefix=prefix, 
-                        suffix=suffix
-                    )
-
-    def update_metadata_index(self):
-        
-        self._set_mode("r")
-
-        rows = list()
-
-        handles = _iter_group(self["/metadata"])
-        handles = set([
-            str(pathlib.Path(p).parent) for p in handles
-        ])
-        for path in sorted(handles):
-            tag = "/".join(path.split("/")[2:])
-            row = (tag,)
-            rows.append(row)
-
-        columns = ["tag"]
-        dataf = pd.DataFrame(rows, columns=columns)
-
-        self._metadata_index = dataf
-        
-        filename = self.filename
-        self.close()
-        dataf.to_hdf(filename, key="/metadata/_index")
-
-        self._reset_mode()
-
-        return (True)
-
-    def update_wf_index(self):
-
-        self._set_mode("r")
-        
-        if "waveforms" not in self:
-            print("No waveforms found. Not updating waveform index.")
-            return (None)
-
-        rows = list()
-
-        for path in _iter_group(self["/waveforms"]):
-            handle = path.split("/")[-1]
-            starttime = handle.split("__")[1]
-            tag = "/".join(path.split("/")[2:-1])
-            shape = self[path].shape
-            sampling_rate = self[path].attrs["sampling_rate"]
-            if isinstance(sampling_rate, np.ndarray):
-                sampling_rate = sampling_rate[0]
-            row = (starttime, tag, handle, shape, sampling_rate)
-            rows.append(row)
-
-        columns = ["starttime", "tag", "handle", "shape", "sampling_rate"]
-        dataf = pd.DataFrame(rows, columns=columns)
-        dataf["starttime"] = pd.to_datetime(dataf["starttime"])
-        sampling_interval = pd.to_timedelta(1 / dataf["sampling_rate"], unit="S")
-        nsamples = dataf["shape"].apply(lambda x: x[-1])
-        dataf["endtime"] = dataf["starttime"] + sampling_interval * (nsamples - 1)
-
-        self._index = dataf
-        filename = self.filename
-        self.close()
-        dataf.to_hdf(filename, key="/waveforms/_index")
-
-        self._reset_mode()
-
-        return (True)
-
-
-
-class Gather(object):
-
-    def __init__(self, data, starttime, sampling_rate, trace_idxs):
-        """
-        A class to contain, process, and visualize DAS data.
-
-        Positional Arguments
-        ====================
-        data: np.ndarray
-            2D array of waveform data with trace index along the first
-            axis and time along the second.
-        starttime: int, float, str, datetime
-            Time of first sample in *data*.
-        sampling_rate: int, float
-            Sampling rate of *data*.
-        trace_idxs: array-like
-            1D array of indices of traces in *data*.
-        """
-        self._data = data
-        self._starttime = pd.to_datetime(starttime, utc=True)
-        self._sampling_rate = sampling_rate
-        self._trace_idxs = np.array(trace_idxs)
-
-    @property
-    def data(self):
-        """
-        Waveform data.
-        """
-        return (self._data)
-
-    @data.setter
-    def data(self, value):
-        self._data = value
-
-    @property
-    def dataf(self):
-        """
-        Contained data as a pandas.DataFrame.
-        """
-
-        data = self.data
-
-        if data.ndim == 2:
-            dataf = pd.DataFrame(
-                data.T,
-                index=self.times,
-                columns=self.trace_idxs
-            )
-
-        elif data.ndim == 3:
-            nrec, nchan, nsamp = data.shape
-            rec = np.repeat(self.trace_idxs, nchan)
-            chan = np.tile(range(nchan), nrec)
-            columns = pd.MultiIndex.from_arrays(
-                (rec, chan),
-                names=("receiver", "channel")
-            )
-            dataf = pd.DataFrame(
-                data.reshape(-1, data.shape[-1]).T,
-                columns=columns,
-                index=self.times
-            )
-        else:
-            raise (NotImplementedError())
-
-        return(dataf)
-
-
-    @property
-    def datas(self):
-        """
-        Contained data as a obspy.Stream.
-        """
-        import obspy
-        stream = obspy.Stream()
-        for i, d in enumerate(self.data):
-            trace = obspy.Trace(
-                data=d.copy(),
-                header=dict(
-                    starttime=self.starttime,
-                    sampling_rate=self.sampling_rate,
-                    network="??",
-                    station=f"{i+1:04d}",
-                    location="??",
-                    channel="???"
-                )
-            )
-            stream.append(trace)
-
-        return (stream)
-
-    @property
-    def endtime(self):
-        """
-        Time of last sample in self.data.
-        """
-        return (
-              self.starttime
-            + pd.to_timedelta((self.nsamples-1) / self.sampling_rate, unit="S")
-        )
-    @property
-    def f(self):
-        """
-        Frequency coordinates of data in fk domain.
-        """
-        f = np.fft.fftfreq(self.nsamples, d=self.sampling_interval)
-        return (f)
-
-    @property
-    def k(self):
-        """
-        Wavenumber coordinates of data in fk domain.
-        """
-        k = np.fft.fftfreq(self.ntraces)
-
-        return (k)
-
-    @property
-    def norm_coeff(self):
-        """
-        Array of normalization constants.
-        """
-        if self._data.ndim == 3:
-            reshape = np.atleast_3d
-        else:
-            reshape = lambda x: np.transpose(np.atleast_2d(x))
-
-        return (reshape(np.max(np.abs(self.data), axis=-1)))
-
-    @property
-    def ntraces(self):
-        """
-        Number of traces in data.
-        """
-        return (self.data.shape[0])
-
-    @property
-    def nsamples(self):
-        """
-        Number of time samples in data.
-        """
-        return (self.data.shape[-1])
-
-    @property
-    def nyquist(self):
-        """
-        Nyquist frequency of data.
-        """
-        return (self.sampling_rate / 2)
-
-    @property
-    def sampling_interval(self):
-        """
-        Time interval between data samples.
-        """
-        return (1 / self.sampling_rate)
-
-    @property
-    def sampling_rate(self):
-        """
-        Temporal sampling rate of data.
-        """
-        return (self._sampling_rate)
-
-    @property
-    def starttime(self):
-        """
-        Time of first sample in data.
-        """
-        return (self._starttime)
-
-    @property
-    def times(self):
-        """
-        Time coordinates of data in data domain.
-        """
-        times = pd.date_range(
-            start=self.starttime,
-            periods=self.nsamples,
-            freq=f"{1/self.sampling_rate}S"
-        )
-        return (times)
-
-    @property
-    def trace_idxs(self):
-        """
-        Trace indices of data in data domain.
-        """
-        return (self._trace_idxs)
-
-
-    def apply_fk_mask(self, mask):
-        """
-        Apply fk-mask, *mask*, to data in place.
-        """
-        self._data = np.real(np.fft.ifft2(np.fft.fft2(self.data) * mask))
-
-
-    def bandpass(self, horder=2, locut=1, hicut=300):
-        """
-        Bandpass data in place.
-        """
-        nyq = self.sampling_rate / 2
-        sos = scipy.signal.butter(horder, [locut/nyq, hicut/nyq], btype="bandpass", output="sos")
-        self._data = scipy.signal.sosfiltfilt(sos, self.data)
-
-
-    def copy(self):
-        gather = Gather(
-            self.data.copy(),
-            self.starttime,
-            self.sampling_rate,
-            self.trace_idxs.copy()
-        )
-
-        return (gather)
-
-
-    def decimate(self, factor):
-        """
-        Decimate data in place.
-        """
-        self._data = scipy.signal.decimate(self.data, factor)
-        self._sampling_rate /= factor
-
-
-    def demean(self):
-        """
-        Demean data in place.
-        """
-        if self._data.ndim == 3:
-            reshape = np.atleast_3d
-        else:
-            reshape = lambda x: np.transpose(np.atleast_2d(x))
-        self._data = self.data - reshape(np.mean(self.data, axis=-1))
-
-
-    def denormalize(self, norm):
-        """
-        Denormalize data in place.
-        """
-        self._data = self.data * norm
-
-
-    def normalize(self, norm_coeff=None):
-        """
-        Normalize data in place.
-        """
-        if norm_coeff is None:
-            norm_coeff = self.norm_coeff
-
-        self._data = self.data / norm_coeff
-
-
-    def plot(self, domain="time", type="DAS", **kwargs):
-        """
-        Plot data in time or fk domain.
-        """
-
-        if domain == "time":
-
-            if type == "DAS":
-
-                return (self._plot_time_domain(**kwargs))
-
-            elif type == "geophone":
-
-                return (self._plot_geophone(**kwargs))
-
-
-        elif domain == "fk":
-
-            return (self._plot_fk_domain(**kwargs))
-
-    def sample_idx(self, time, right=False):
-        """
-        Return the sampling index corresponding to the given time.
-        """
-        return (
-            _sample_idx(
-                time, self.starttime, self.sampling_rate, right=right
-            )
-        )
-
-
-    def trim(self, starttime=None, endtime=None, right=False):
-        """
-        Trim data to desired start and endtime (in place).
-        """
-        if starttime is not None:
-            istart = self.sample_idx(starttime, right=right)
-        else:
-            istart = 0
-
-        if endtime is not None:
-            iend   = self.sample_idx(endtime, right=right)
-        else:
-            iend = self.nsamples
-
-        self._data = self.data[..., istart: iend]
-        delta = pd.to_timedelta(istart / self.sampling_rate, unit="S")
-        self._starttime = self.starttime + delta
-
-
-    def write(self, path, tag="", **kwargs):
-        path = pathlib.Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with File(path, mode="a") as f5:
-            f5.add_waveforms(self.data, self.starttime, self.sampling_rate, tag=tag, **kwargs)
-
-        return (True)
-
-
-    def write_binary(self, path, dtype=None):
-        """
-        Write data to `path` in raw binary format. Optionally cast
-        data to `dtype`.
-        """
-        d = self.data.flatten()
-        if dtype is not None and d.dtype != dtype:
-            d = d.astype(dtype)
-        with open(path, "wb") as outfile:
-            d.tofile(outfile)
-
-        return (True)
-
-
-    def _write(self, path, **kwargs):
-        """
-        DEPRECATED
-        Write data to disk.
-        """
-        starttime = self.starttime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        endtime = self.endtime.strftime("%Y-%m-%dT%H:%M:%S.%f")
-        with h5py.File(path, mode="w") as f5out:
-            ds = f5out.create_dataset(
-                f"waveforms/{starttime}__{endtime}",
-                data=self.data,
-                dtype=np.float32,
-                **kwargs
-            )
-            ds.attrs["starttime"] = starttime
-            ds.attrs["sampling_rate"] = self.sampling_rate
-            ds.attrs["sample_interval"] = 1 / self.sampling_rate
-
-
-    def _plot_fk_domain(self, amax=None, figsize=None, cmap=plt.get_cmap("magma")):
-        fft = np.fft.fft2(self.data)
-        k   = np.fft.fftfreq(self.ntraces)
-        f   = np.fft.fftfreq(self.nsamples, d=self.sampling_interval)
-
-        fig, ax = plt.subplots(figsize=figsize)
-
-        qmesh = ax.pcolorfast(
-            np.fft.fftshift(f),
-            np.fft.fftshift(k),
-            np.abs(np.fft.fftshift(fft)),
-            vmin=0,
-            vmax=np.percentile(np.abs(fft), 99) if amax is None else amax,
-            cmap=cmap
-        )
-
-        ax.set_xlim(0, np.max(f))
-        ax.set_xlabel("Frequency ($s^{-1})$")
-        ax.set_ylabel("Wavenumber ($m^{-1}$)");
-
-        cbar = fig.colorbar(qmesh, ax=ax)
-        cbar.set_label("Amplitude")
-
-        plt.tight_layout()
-
-        return (ax)
-
-
-    def _plot_time_domain(self, amax=None, figsize=None, cmap=plt.get_cmap("bone")):
-
-        if amax is None:
-            amax = np.amax(np.abs(self.data))
-        mpltimes = mpl.dates.date2num(self.times)
-
-        fig, ax = plt.subplots(figsize=figsize)
-        qmesh = ax.pcolorfast(
-            self.trace_idxs,
-            mpltimes,
-            self.data.T,
-            cmap=cmap,
-            vmin=-amax,
-            vmax=amax
-        )
-
-        ax.xaxis.set_minor_locator(mpl.ticker.AutoMinorLocator())
-        ax.set_xlim(self.trace_idxs[0], self.trace_idxs[-1])
-        ax.set_xlabel("Trace index")
-
-        locator = mpl.dates.AutoDateLocator()
-        ax.yaxis.set_major_locator(locator)
-        ax.yaxis.set_major_formatter(mpl.dates.ConciseDateFormatter(locator))
-        ax.yaxis.set_minor_locator(mpl.ticker.AutoMinorLocator())
-        ax.set_ylim(mpltimes[0], mpltimes[-1])
-        ax.invert_yaxis()
-        ax.set_ylabel("Time")
-
-        cbar = fig.colorbar(qmesh, ax=ax)
-        cbar.set_label("Amplitude")
-
-        plt.tight_layout()
-
-        return (ax)
-
-    def _plot_geophone(self):
-        fig, ax = plt.subplots()
-        for itrace, trace in enumerate(self.data[:, 0]):
-            ax.plot(trace + itrace, self.times, color="k", linewidth=1)
-
-        ax.set_xlabel("Trace index")
-        ax.set_ylim(self.times.min(), self.times.max())
-        ax.invert_yaxis()
-        locator = mpl.dates.AutoDateLocator()
-        ax.yaxis.set_major_locator(locator)
-        ax.yaxis.set_major_formatter(mpl.dates.ConciseDateFormatter(locator))
-        plt.tight_layout()
-
-
-def build_fk_notch_mask(k0, alpha, k, n):
-    mask = 1 - np.exp(-np.abs(alpha*(k0-k)))
-    mask = np.repeat(np.atleast_2d(mask), n, axis=0).T
-
-    return (mask)
-
-
-def build_fk_slope_mask(m, sigma, f, k):
-    mask   = np.zeros((len(k), len(f)))
-
-    for i in range(1, len(f)):
-        for sign in (-1, 1):
-            mask[:, i] += scipy.stats.norm(
-                loc=sign*m*f[i],
-                scale=sigma
-            ).pdf(k)
-
-    return (mask)
-
-
-def plot_fk_mask(f, k, mask, figsize=None, cmap=plt.get_cmap("plasma")):
-    fig, ax = plt.subplots(figsize=figsize)
-    qmesh = ax.pcolorfast(
-        np.fft.fftshift(f),
-        np.fft.fftshift(k),
-        np.fft.fftshift(mask),
-        cmap=cmap
-    )
-    ax.set_xlabel("Frequency ($s^{-1}$)")
-    ax.set_xlim(0, np.max(f))
-
-    ax.set_ylabel("Wavenumber ($m^{-1}$)")
-
-    cbar = fig.colorbar(qmesh, ax=ax)
-    cbar.set_label("Amplitude")
-
-    plt.tight_layout()
-
-    return (ax)
-
-
-def _iter_group(group):
-    """
-    Return a list of all data sets in group. Skip special "_index" group.
-    """
-    groups = list()
-    for key in group:
-        if isinstance(group[key], h5py.Group):
-            if key[0] == "_":
-                continue
-            else:
-                groups += _iter_group(group[key])
-        else:
-            groups.append("/".join((group.name, key)))
-
-    return (groups)
-
-
-def _list_files(path):
-    """
-    Generator of paths to all files in `path` and its subdirectories.
-    """
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            yield (pathlib.Path(root).joinpath(file))
-
-
-def _repr_group(group, indent=""):
-    s = ""
-    for key in group:
-        s += f"{indent}+--{key}\n"
-        if isinstance(group[key], h5py.Group):
-            s += _repr_group(group[key], indent=indent+"|--")
-    return (s)
-
-
+#def _iter_group(group):
+#    """
+#    Return a list of all data sets in group. Skip special "_index" group.
+#    """
+#    groups = list()
+#    for key in group:
+#        if isinstance(group[key], h5py.Group):
+#            if key[0] == "_":
+#                continue
+#            else:
+#                groups += _iter_group(group[key])
+#        else:
+#            groups.append("/".join((group.name, key)))
+#
+#    return (groups)
+#
+#
+#def _list_files(path):
+#    """
+#    Generator of paths to all files in `path` and its subdirectories.
+#    """
+#    for root, dirs, files in os.walk(path):
+#        for file in files:
+#            yield (pathlib.Path(root).joinpath(file))
+#
+#
+#def _repr_group(group, indent=""):
+#    s = ""
+#    for key in group:
+#        s += f"{indent}+--{key}\n"
+#        if isinstance(group[key], h5py.Group):
+#            s += _repr_group(group[key], indent=indent+"|--")
+#    return (s)
+#
+#
 def _sample_idx(time, starttime, sampling_rate, right=False):
     """
     Get the index of a sample at a given time, relative to starttime.
