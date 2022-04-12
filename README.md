@@ -1,2 +1,2 @@
 # HDF5eis (read HDF-size)
-Basic data storage, I/O, processing, and visualization for DAS, DTS, and geophone data using HDF5 backend.
+A Solution for Storing and Accessing Big, Multidimensional Data From Environmental Sensors.
