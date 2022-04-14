@@ -261,6 +261,7 @@ class WaveformAccessor(AccessorBase, object):
         te = self.strftime(endtime)
         handle = "/".join((tag, f"__{ts}__{te}"))
         handle = re.sub("//+", "/", handle)
+        handle = handle.lstrip("/")
 
         return (handle)
 
