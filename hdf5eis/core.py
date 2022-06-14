@@ -106,7 +106,7 @@ class AccessorBase:
     def link(self, src_file, src_path, key):
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
-    def _add_table(self, dataf, key):
+    def add_table(self, dataf, key):
         """
         Add DataFrame `dataf` to root group under `key`.
         """
@@ -117,14 +117,14 @@ class AccessorBase:
 
     def _write_table(self, dataf, key):
         for column in dataf.columns:
-            self._write_column(dataf[column], key)
+            self.write_column(dataf[column], key)
 
         if "__INDEX" in self.root[key]:
             del self.root[f"{key}/__INDEX"]
 
         self.root[key].create_dataset("__INDEX", data=dataf.index.values)
 
-    def _write_column(self, column, key):
+    def write_column(self, column, key):
         """
         Write a single column of data to the self.root Group of
         self.parent.
@@ -158,7 +158,7 @@ class AccessorBase:
         datas.attrs["__IS_UTC_DATETIME64"] = is_utc_datetime64
         datas.attrs["__IS_UTF8"] = is_utf8
 
-    def _read_table(self, key):
+    def read_table(self, key):
         group = self.root[key]
         dataf = pd.DataFrame(index=group["__INDEX"][:])
         for column in filter(lambda key: key != "__INDEX", group.keys()):
@@ -184,7 +184,7 @@ class AuxiliaryAccessor(AccessorBase):
         dtype = self.root[key].attrs["type"]
 
         if dtype == "TABLE":
-            return self._read_table(key)
+            return self.read_table(key)
         if dtype == "UTF-8":
             return self.root[key][0].decode()
         raise HDF5eisFileFormatError(f"Unknown data type {dtype} for key {key}.")
@@ -194,7 +194,7 @@ class AuxiliaryAccessor(AccessorBase):
         Add `dataf` to the appropriate group of the open file under `key`.
         """
         if isinstance(obj, pd.DataFrame):
-            self._add_table(obj, key)
+            self.add_table(obj, key)
         elif isinstance(obj, str):
             self._add_utf8(obj, key)
 
@@ -213,7 +213,7 @@ class WaveformAccessor(AccessorBase):
     def index(self):
         if not hasattr(self, "_index"):
             if "__TS_INDEX" in self.root:
-                self._index = self._read_table("__TS_INDEX")
+                self._index = self.read_table("__TS_INDEX")
             else:
                 self._index = pd.DataFrame(columns=TS_INDEX_COLUMNS)
                 self._index = self._index.astype(TS_INDEX_DTYPES)
@@ -270,7 +270,7 @@ class WaveformAccessor(AccessorBase):
 
     def flush_index(self):
         if "__TS_INDEX" not in self.root:
-            self._add_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
+            self.add_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
         else:
             self._write_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
 
@@ -281,8 +281,32 @@ class WaveformAccessor(AccessorBase):
         prefix=None,
         suffix=None,
         new_tag=None,
-        flush_index=True,
+        flush_index=True
     ):
+        """
+        Links timeseries data from an external file to the current file.
+
+        Parameters
+        ----------
+        src_file : str or pathlib.Path
+            Path to external file to be linked.
+        src_tag : str
+            Tag in external file to be linked.
+        prefix : str, optional
+            Prefix for new tag. The default is None.
+        suffix : str, optional
+            Suffix for new tag. The default is None.
+        new_tag : str, optional
+            New tag. The default is None.
+        flush_index : bool, optional
+            Flush the index to disk. This should be set to True unless
+            you know what you are doing. The default is True.
+
+        Returns
+        -------
+        None.
+
+        """
         assert prefix is None or isinstance(prefix, str)
         assert suffix is None or isinstance(suffix, str)
         assert new_tag is None or isinstance(new_tag, str)
@@ -294,6 +318,7 @@ class WaveformAccessor(AccessorBase):
             new_tag = new_tag.lstrip("/")
 
         new_index = list()
+        
         with File(src_file, mode="r") as file:
             index = file.timeseries.index
             index = index[index["tag"].str.match(src_tag)]
