@@ -6,6 +6,7 @@ Created on Tue Jun 14 10:32:43 2022
 @author: malcolmw
 """
 # Standard library imports
+import pathlib
 import string
 import tempfile
 import unittest
@@ -38,11 +39,11 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
         with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
             accessor = hdf5eis.core.AccessorBase(file, "/root")
-            accessor._add_table(dataf, "TEST")
+            accessor.add_table(dataf, "TEST")
             columns = np.sort(dataf.columns)
             dataf["string"]= dataf["string"].str.decode("UTF-8")
             self.assertTrue(np.all(
-                dataf[columns] == accessor._read_table("TEST")[columns]
+                dataf[columns] == accessor.read_table("TEST")[columns]
             ))
 
     def _test_float_io(self, accessor):
@@ -51,7 +52,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
                 np.random.rand(1024).astype(dtype),
                 name=str(dtype)
             )
-            accessor._write_column(data, "TEST")
+            accessor.write_column(data, "TEST")
             handle = f"TEST/{dtype}"
             self.assertTrue(accessor.root[handle].dtype == dtype)
             self.assertTrue(
@@ -70,7 +71,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
                 ).astype(dtype),
                 name=str(dtype)
             )
-            accessor._write_column(data, "TEST")
+            accessor.write_column(data, "TEST")
             handle = f"TEST/{dtype}"
             self.assertTrue(accessor.root[handle].dtype == dtype)
             self.assertTrue(
@@ -81,7 +82,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
     def _test_string_io(self, accessor):
         strings = random_strings(1024)
-        accessor._write_column(strings, "TEST")
+        accessor.write_column(strings, "TEST")
         handle = "TEST/string"
         self.assertTrue(np.all(strings == pd.Series(accessor.root[handle][:])))
         self.assertTrue(accessor.root[handle].attrs["__IS_UTF8"])
@@ -89,7 +90,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
     def _test_datetime_io(self, accessor):
         times = random_times(1024)
-        accessor._write_column(times, "TEST")
+        accessor.write_column(times, "TEST")
         handle = "TEST/time"
         self.assertTrue(np.all(
             times == pd.Series(pd.to_datetime(accessor.root[handle][:], utc=True))
@@ -109,51 +110,107 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             self.assertTrue(
                 np.all(dataf[columns] == accessor["TEST"][columns])
             )
-            string = random_string(max_length=8192)
-            accessor.add(string, "string")
-            self.assertTrue(string == accessor["string"])
+            my_string = random_string(max_length=8192)
+            accessor.add(my_string, "string")
+            self.assertTrue(my_string == accessor["string"])
 
 
 class TestWaveformAccessorClassMethods(unittest.TestCase):
     def test_add(self):
+        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
+            accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+            self._test_float_io(accessor)
+            self._test_int_io(accessor)
+            
+    def test_link_tag(self):
         shape = (8, 8, 3, 500)
         now = pd.Timestamp.now(tz="UTC")
         delta = pd.to_timedelta(1/100, unit="S")
-        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
-            accessor = hdf5eis.core.WaveformAccessor(file, "/root")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir = pathlib.Path(temp_dir)
+            path1 = temp_dir.joinpath("file1.hdf5")
+            path2 = temp_dir.joinpath("file2.hdf5")
+            path3 = temp_dir.joinpath("file3.hdf5")
+            path4 = temp_dir.joinpath("file4.hdf5")
+            master_path = temp_dir.joinpath("master.hdf5")
+            for ipath, path in enumerate((path1, path2, path3, path4)):
+                with h5py.File(path, mode="w") as file:
+                    accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+                    accessor.add(
+                        np.random.rand(*shape).astype(np.float32),
+                        now,
+                        100,
+                        tag=f"file{ipath+1}"
+                    )
+            with h5py.File(master_path, mode="w") as file:
+                accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+                accessor.link_tag(path1, "file1")
+                accessor.link_tag(
+                    path2, 
+                    "file2", 
+                    prefix="prefix", 
+                    suffix="suffix"
+                )
+                accessor.link_tag(path3, "file3", new_tag="FILE3")
+                accessor.link_tag(
+                    path4, 
+                    "file4", 
+                    new_tag="FILE4", 
+                    prefix="prefix"
+                )
+                self.assertEqual(accessor.index.loc[0, "tag"], "file1")
+                self.assertEqual(
+                    accessor.index.loc[1, "tag"], 
+                    "prefix/file2/suffix"
+                )
+                self.assertEqual(accessor.index.loc[2, "tag"], "FILE3")
+                self.assertEqual(accessor.index.loc[3, "tag"], "FILE4")
+                _ = accessor["file1", :, :, :, now:now+delta*500]
+                _ = accessor["prefix/file2/suffix", :, :, :, now:now+delta*500]
+                _ = accessor["FILE3", :, :, :, now:now+delta*500]
+                _ = accessor["FILE4", :, :, :, now:now+delta*500]
+                    
             
-            # Test float IO
-            data_out = np.random.rand(*shape)
-            for dtype in (np.float16, np.float32, np.float64, np.float128):
-                accessor.add(
-                    data_out.astype(dtype), 
-                    now,
-                    100,
-                    tag=str(dtype)
-                )
-                data_in = accessor[
-                    str(dtype), :, :, :, now: now+delta*500*60
-                ][str(dtype)][0].data
-                self.assertTrue(np.all(data_in == data_out.astype(dtype)))
-                
-            # Test int IO
-            for dtype in (np.int8, np.int16, np.int32, np.int64):
-                data_out = np.random.randint(
-                    np.iinfo(dtype).min,
-                    np.iinfo(dtype).max,
-                    size=shape
-                ).astype(dtype)
-                accessor.add(
-                    data_out,
-                    now,
-                    100,
-                    tag=str(dtype)
-                )
-                data_in = accessor[
-                    str(dtype), :, :, :, now: now+delta*500*60
-                ][str(dtype)][0].data
-                self.assertTrue(np.all(data_in == data_out))
         
+            
+    def _test_float_io(self, accessor):
+        shape = (8, 8, 3, 500)
+        now = pd.Timestamp.now(tz="UTC")
+        delta = pd.to_timedelta(1/100, unit="S")
+        data_out = np.random.rand(*shape)
+        for dtype in (np.float16, np.float32, np.float64, np.float128):
+            accessor.add(
+                data_out.astype(dtype),
+                now,
+                100,
+                tag=str(dtype)
+            )
+            data_in = accessor[
+                str(dtype), :, :, :, now: now+delta*500*60
+            ][str(dtype)][0].data
+            self.assertTrue(np.all(data_in == data_out.astype(dtype)))
+
+    def _test_int_io(self, accessor):
+        shape = (8, 8, 3, 500)
+        now = pd.Timestamp.now(tz="UTC")
+        delta = pd.to_timedelta(1/100, unit="S")
+        for dtype in (np.int8, np.int16, np.int32, np.int64):
+            data_out = np.random.randint(
+                np.iinfo(dtype).min,
+                np.iinfo(dtype).max,
+                size=shape
+            ).astype(dtype)
+            accessor.add(
+                data_out,
+                now,
+                100,
+                tag=str(dtype)
+            )
+            data_in = accessor[
+                str(dtype), :, :, :, now: now+delta*500*60
+            ][str(dtype)][0].data
+            self.assertTrue(np.all(data_in == data_out))
+
 
 def random_string(max_length=32):
     return "".join(
