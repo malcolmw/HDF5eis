@@ -1,28 +1,31 @@
-import h5py
-import numpy as np
-import pandas as pd
+"""
+Core functionality for HDF5eis provided by the hdf5eis.File class.
+"""
+# Standard library imports
 import pathlib
 import re
 import warnings
 
-# Local module import
-import gather
+# Third party imports
+import h5py
+import numpy as np
+import pandas as pd
 
-warnings.simplefilter(
-    action="ignore",
-    category=pd.errors.PerformanceWarning
-)
-
-WF_INDEX_COLUMNS = [
-    "tag",
-    "starttime",
-    "endtime",
-    "sampling_rate",
-    "shape"
-]
+# Local imports
+from . import gather
 
 
-class File(h5py.File,object):
+TS_INDEX_COLUMNS = ["tag", "starttime", "endtime", "sampling_rate", "npts"]
+TS_INDEX_DTYPES = {
+    "tag": np.dtype("S"),
+    "starttime": pd.api.types.DatetimeTZDtype(tz="UTC"),
+    "endtime": pd.api.types.DatetimeTZDtype(tz="UTC"),
+    "sampling_rate": np.float32,
+    "npts": np.int64,
+}
+
+
+class File(h5py.File):
     def __init__(self, *args, overwrite=False, **kwargs):
         """
         An h5py.File subclass for convenient I/O of big, multidimensional
@@ -31,12 +34,6 @@ class File(h5py.File,object):
 
         if "mode" not in kwargs:
             kwargs["mode"] = "r"
-
-        self._open_mode = kwargs["mode"]
-
-        self._init_args = args
-        self._init_kwargs = kwargs.copy()
-        self._init_kwargs["mode"] = "r" if self._init_kwargs["mode"] == "r" else "r+"
 
         if (
             kwargs["mode"] == "w"
@@ -50,36 +47,27 @@ class File(h5py.File,object):
                 )
             )
 
-        super(File, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
-
-
+        self._metadata = AuxiliaryAccessor(self, "/metadata")
+        self._products = AuxiliaryAccessor(self, "/products")
+        self._timeseries = WaveformAccessor(self, "/timeseries")
 
     @property
     def metadata(self):
-        if not hasattr(self, "_metadata"):
-            self._metadata = AuxiliaryAccessor(self, "/metadata")
-
-        return (self._metadata)
+        return self._metadata
 
     @property
     def products(self):
-        if not hasattr(self, "_products"):
-            self._products = AuxiliaryAccessor(self, "/products")
-
-        return (self._products)
+        return self._products
 
     @property
-    def waveforms(self):
-        if not hasattr(self, "_waveforms"):
-            self._waveforms = WaveformAccessor(self, "/waveforms")
-
-        return (self._waveforms)
-
+    def timeseries(self):
+        return self._timeseries
 
     def list_datasets(self, group=None):
         """
-        Return a list of all data sets in group. Skip special "_index" group.
+        Return a list of all data sets in group. Skip special "__INDEX" group.
         """
         if group is None:
             group = self
@@ -89,10 +77,9 @@ class File(h5py.File,object):
         groups = list()
         for key in group:
             if isinstance(group[key], h5py.Group):
-                if key == "index":
+                if key == "__INDEX":
                     continue
-                else:
-                    groups += self.list_datasets(group=group[key])
+                groups += self.list_datasets(group=group[key])
             else:
                 if group.name.split("/")[1] in ("products", "metadata"):
                     if group.name not in groups:
@@ -100,69 +87,107 @@ class File(h5py.File,object):
                 else:
                     groups.append("/".join((group.name, key)))
 
-        return (groups)
+        return groups
 
 
-    def reopen(self):
-        """
-        Reopen the HDF5 file.
-
-        Opens in "r+" mode if object was instantiated with write permissions.
-        Opens in "r" mode otherwise.
-        """
-
-        super(File, self).__init__(*self._init_args, **self._init_kwargs)
-
-
-class AccessorBase(object):
+class AccessorBase:
     def __init__(self, parent, root):
         self._parent = parent
         self._root = root
 
-
     @property
     def parent(self):
-        return (self._parent)
-
+        return self._parent
 
     @property
     def root(self):
-        return (self._parent.require_group(self._root))
-
-
-    def add(self, dataf, key):
-        """
-        Add `dataf` to the appropriate group of the open file under `key`.
-        """
-        key = "/".join((self.root.name, key))
-        filename = self.parent.file.filename
-        self.parent.close()
-        try:
-            dataf.to_hdf(filename, key=key)
-        finally:
-            self.parent.reopen()
-
+        return self._parent.require_group(self._root)
 
     def link(self, src_file, src_path, key):
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
+    def _add_table(self, dataf, key):
+        """
+        Add DataFrame `dataf` to root group under `key`.
+        """
+        group = self.root.create_group(key)
+        group.attrs["type"] = "TABLE"
 
-class AuxiliaryAccessor(AccessorBase, object):
+        self._write_table(dataf, key)
+
+    def _write_table(self, dataf, key):
+        for column in dataf.columns:
+            self._write_column(dataf[column], key)
+
+        if "__INDEX" in self.root[key]:
+            del self.root[f"{key}/__INDEX"]
+
+        self.root[key].create_dataset("__INDEX", data=dataf.index.values)
+
+    def _write_column(self, column, key):
+        """
+        Write a single column of data to the self.root Group of
+        self.parent.
+
+        Parameters
+        ----------
+        column : pandas.Series
+            Column of data to write.
+        key : str
+            Key value under which to store data.
+
+        Returns
+        -------
+        None.
+
+        """
+        is_utc_datetime64 = pd.api.types.is_datetime64_any_dtype(column)
+        is_utf8 = hasattr(column.dtype, "char") and column.dtype.char == np.dtype("S")
+
+        if is_utc_datetime64:
+            if column.dt.tz is None:
+                warnings.warn(f"Time zone of '{column}' is not set. Assuming UTC.")
+                column = column.dt.tz_localize("UTC")
+            column = column.dt.tz_convert("UTC")
+            column = column.astype(np.int64)
+
+        if f"{key}/{column.name}" in self.root:
+            del self.root[f"{key}/{column.name}"]
+
+        datas = self.root[key].create_dataset(column.name, data=column.values)
+        datas.attrs["__IS_UTC_DATETIME64"] = is_utc_datetime64
+        datas.attrs["__IS_UTF8"] = is_utf8
+
+    def _read_table(self, key):
+        group = self.root[key]
+        dataf = pd.DataFrame(index=group["__INDEX"][:])
+        for column in filter(lambda key: key != "__INDEX", group.keys()):
+            dataf[column] = group[column][:]
+            if group[column].attrs["__IS_UTC_DATETIME64"] is np.bool_(True):
+                dataf[column] = pd.to_datetime(dataf[column], utc=True)
+            elif group[column].attrs["__IS_UTF8"] is np.bool_(True):
+                dataf[column] = dataf[column].str.decode("UTF-8")
+
+        return dataf
+
+
+class HDF5eisFileFormatError(Exception):
+    pass
+
+
+class AuxiliaryAccessor(AccessorBase):
     def __getitem__(self, key):
         """
         Read the item under `key` from this group.
         """
 
-        obj = self.root[key]
-        dtype = obj.attrs["type"]
+        dtype = self.root[key].attrs["type"]
 
         if dtype == "TABLE":
-            return (self._read_table(obj))
-        elif dtype == "UTF-8":
-            return (obj[0].decode())
-        else:
-            raise (HDF5eisFileFormatError(f"Unknown data type {dtype} for key {key}."))
-
+            return self._read_table(key)
+        if dtype == "UTF-8":
+            return self.root[key][0].decode()
+        raise HDF5eisFileFormatError(f"Unknown data type {dtype} for key {key}.")
 
     def add(self, obj, key):
         """
@@ -173,102 +198,34 @@ class AuxiliaryAccessor(AccessorBase, object):
         elif isinstance(obj, str):
             self._add_utf8(obj, key)
 
-    def _add_table(self, dataf, key):
-        filename = self.parent.file.filename
-        pkey = "/".join((self.root.name, key)) # Key in parent
-        self.parent.close()
-        try:
-            dataf.to_hdf(filename, key=pkey)
-        finally:
-            self.parent.reopen()
-        self.root[key].attrs["type"] = "TABLE"
-
-
     def _add_utf8(self, data, key):
         self.root.create_dataset(
-            key,
-            data=[data],
-            dtype=h5py.string_dtype(encoding='utf-8')
+            key, data=[data], dtype=h5py.string_dtype(encoding="utf-8")
         )
         self.root[key].attrs["type"] = "UTF-8"
-
-
-    def _read_table(self, group):
-        filename = group.file.filename
-        key = group.name
-
-        if filename == self.parent.file.filename:
-            self.parent.close()
-            try:
-                dataf = pd.read_hdf(filename, key)
-            except h5py.HDF5ExtError as err:
-                raise (err)
-            finally:
-                self.parent.reopen()
-        else:
-            group.file.close()
-            dataf = pd.read_hdf(filename, key)
-
-        return (dataf)
-
 
     def link(self, src_file, src_path, key):
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
 
-class HDF5eisFileFormatError(Exception):
-    pass
-
-
-class WaveformAccessor(AccessorBase, object):
+class WaveformAccessor(AccessorBase):
     @property
     def index(self):
         if not hasattr(self, "_index"):
-            filename = self.parent.file.filename
-            self.parent.close()
-            try:
-                # Try to read from disk first.
-                index =  pd.read_hdf(filename, key="/waveforms/index")
-            except KeyError:
-                # Initialize with empty DataFrame if nothing found on disk.
-                index = pd.DataFrame()
-            finally:
-                self.parent.reopen()
-
-            self._index = index
-
-        return (self._index)
-
+            if "__TS_INDEX" in self.root:
+                self._index = self._read_table("__TS_INDEX")
+            else:
+                self._index = pd.DataFrame(columns=TS_INDEX_COLUMNS)
+                self._index = self._index.astype(TS_INDEX_DTYPES)
+        return self._index
 
     @index.setter
     def index(self, value):
         self._index = value
 
-
-    def strftime(self, time):
-        """
-        Return a formatted string representation of `time`.
-        """
-        return (time.strftime("%Y%m%dT%H:%M:%S.%fZ"))
-
-
-    def handle(self, tag, starttime, endtime):
-        """
-        Returns a properly formatted reference to data specified by
-        `tag`, `starttime`, and `endtime`.
-        """
-        ts = self.strftime(starttime)
-        te = self.strftime(endtime)
-        handle = "/".join((tag, f"__{ts}__{te}"))
-        handle = re.sub("//+", "/", handle)
-        handle = handle.lstrip("/")
-
-        return (handle)
-
-
     def add(self, data, starttime, sampling_rate, tag="", flush_index=True, **kwargs):
         """
-        Add waveforms to the parent HDF5 file.
+        Add timeseries to the parent HDF5 file.
         """
         if "dtype" not in kwargs:
             kwargs["dtype"] = data.dtype
@@ -279,15 +236,16 @@ class WaveformAccessor(AccessorBase, object):
             sampling_rate,
             tag=tag,
             flush_index=flush_index,
-            **kwargs
+            **kwargs,
         )
 
         datas[:] = data
 
-        return (True)
+        return True
 
-
-    def create_dataset(self, shape, starttime, sampling_rate, tag="", flush_index=True, **kwargs):
+    def create_dataset(
+        self, shape, starttime, sampling_rate, tag="", flush_index=True, **kwargs
+    ):
         """
         Returns an empty dataset.
         """
@@ -295,179 +253,214 @@ class WaveformAccessor(AccessorBase, object):
         nsamples = shape[-1]
         starttime = pd.to_datetime(starttime)
         endtime = starttime + sampling_interval * (nsamples - 1)
-        handle = self.handle(tag, starttime, endtime)
-        datas = self.root.create_dataset(
-            handle,
-            shape=shape,
-            **kwargs
-        )
+        handle = build_handle(tag, starttime, endtime)
+        datas = self.root.create_dataset(handle, shape=shape, **kwargs)
         datas.attrs["sampling_rate"] = sampling_rate
 
         row = pd.DataFrame(
-            [[tag, starttime, endtime, sampling_rate, shape]],
-            columns=WF_INDEX_COLUMNS,
+            [[tag, starttime, endtime, sampling_rate, shape[-1]]],
+            columns=TS_INDEX_COLUMNS,
         )
         self.index = pd.concat([self.index, row], ignore_index=True)
+
         if flush_index is True:
             self.flush_index()
 
-        return (self.root[handle])
+        return self.root[handle]
 
+    def flush_index(self):
+        if "__TS_INDEX" not in self.root:
+            self._add_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
+        else:
+            self._write_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
 
-    def flush_index(self, reopen=True):
-        filename = self.parent.file.filename
-        self.parent.close()
-        self.index.to_hdf(filename, key="/waveforms/index")
-        self.parent.reopen()
+    def link_tag(
+        self,
+        src_file,
+        src_tag,
+        prefix=None,
+        suffix=None,
+        new_tag=None,
+        flush_index=True,
+    ):
+        assert prefix is None or isinstance(prefix, str)
+        assert suffix is None or isinstance(suffix, str)
+        assert new_tag is None or isinstance(new_tag, str)
 
+        if new_tag is None:
+            new_tag = "" if prefix is None else prefix
+            new_tag = "/".join((new_tag, src_tag))
+            new_tag = new_tag if suffix is None else "/".join((new_tag, suffix))
+            new_tag = new_tag.lstrip("/")
 
-    def link(self, src_file, tag=None):
-        with File(src_file, mode="r") as f5:
-            keys = f5.list_datasets(group="/waveforms")
-            index = f5.waveforms.index
+        new_index = list()
+        with File(src_file, mode="r") as file:
+            index = file.timeseries.index
+            index = index[index["tag"].str.match(src_tag)]
 
-        self.root[tag] = h5py.ExternalLink(src_file, "/waveforms")
+            for _, row in index.iterrows():
+                src_handle = "/".join(
+                    (
+                        "/timeseries",
+                        build_handle(row["tag"], row["starttime"], row["endtime"]),
+                    )
+                )
+                new_handle = "/".join((new_tag, src_handle.rsplit("/", maxsplit=1)[-1]))
+                self.root[new_handle] = h5py.ExternalLink(src_file, src_handle)
+                row["tag"] = "/".join((new_tag, row["tag"].lstrip(src_tag))).strip("/")
+                new_index.append(row)
 
-        sep = "" if tag is None else "/"
-        index["tag"] = tag + sep + index["tag"]
+        self.index = pd.concat([self.index, pd.DataFrame(new_index)], ignore_index=True)
 
-        self.index = pd.concat([self.index, index], ignore_index=True)
+        if flush_index is True:
+            self.flush_index()
 
-
-    def read(self, tag, starttime, endtime):
+    def __getitem__(self, key):
         """
-        Return a hdf5eis.core.Gather object with data between *starttime*
-        and *endtime*.
+        Return a list of hdf5eis.gather.Gather objects.
 
-        Positional Arguments
-        ====================
-        starttime: int, float, str, datetime
-            Start time of desired time window.
-        endtime: int, float, str, datetime
-            End time of desired time window.
+        The first element of `key` must be a `str` tag. The last
+        element must be a time slice.
 
-        Keyword Arguments
-        =================
-        traces: list, slice
-            Indices of desired traces.
-
-        Returns
-        =======
-        gather: hdf5eis.core.Gather
-            Gather object containing desired data.
+        Assumes data are regularly sampled between requested start and end times.
         """
 
-        starttime = pd.to_datetime(starttime, utc=True)
-        endtime   = pd.to_datetime(endtime, utc=True)
+        assert isinstance(key[0], str)
+        assert key[-1].start is not None and key[-1].stop is not None
+
+        # key is a tuple
+        tag = key[0]
+        starttime = pd.to_datetime(key[-1].start, utc=True)
+        endtime = pd.to_datetime(key[-1].stop, utc=True)
 
         index = self.index
-
         if index is None:
-            print("No waveforms found.")
-            return (None)
+            warnings.warn("The timeseries index is empty.")
+            return None
 
+        # Find matching tags.
         index = index[index["tag"].str.fullmatch(tag)]
 
-        index = index[
-             (index["starttime"] < endtime)
-            &(index["endtime"] > starttime)
-        ]
-        index = index.sort_values("starttime")
+        # Find datasets within requested time range.
+        index = index[(index["starttime"] < endtime) & (index["endtime"] > starttime)]
 
         if len(index) == 0:
-            raise (ValueError("No data found for specified tag and time range."))
+            warnings.warn("No data found for specified tag and time range.")
+            return None
 
-        sampling_interval = pd.to_timedelta(1 / index["sampling_rate"], unit="S")
-        delta = index["starttime"] - index.shift(1)["endtime"]
+        # Read data for each tag.
+        gathers = dict()
 
-        index["segment_id"] = (delta != sampling_interval).cumsum()
-        index = index.set_index("segment_id")
+        for tag in index["tag"].unique():
+            gathers[tag] = list()
+            _index = index[index["tag"] == tag]
 
-        gathers = list()
+            # Sort values by time.
+            _index = _index.sort_values("starttime")
 
-        for segment_id in index.index.unique():
-            rows = index.loc[[segment_id]]
-            # There should be a check here to make sure the shape of each
-            # chunk is compatible.
+            sampling_interval = pd.to_timedelta(1 / _index["sampling_rate"], unit="S")
+            delta = _index["starttime"] - _index.shift(1)["endtime"]
 
-            # Make sure the sampling rate doesn't change mid stream.
-            assert len(rows["sampling_rate"].unique()) == 1
+            _index["segment_id"] = (delta != sampling_interval).cumsum()
+            _index = _index.set_index("segment_id")
 
-            first_row      = rows.iloc[0]
-            last_row       = rows.iloc[-1]
-            sampling_rate  = first_row["sampling_rate"]
-            data_starttime = first_row["starttime"]
-            data_endtime   = last_row["endtime"]
-            istart         = _sample_idx(starttime, data_starttime, sampling_rate)
-            iend           = _sample_idx(
-                min(endtime, data_endtime),
-                data_starttime,
-                sampling_rate
-            ) + 1
-            nsamples       = iend - istart
-            offset         = pd.to_timedelta(istart / sampling_rate, unit="S")
-            first_sample   = data_starttime + offset
-            shape          = (*first_row["shape"][:-1], nsamples)
-            data           = np.empty(shape)
-            jstart         = 0
-            for _, row in rows.iterrows():
-                data_starttime = row["starttime"]
-                data_endtime   = row["endtime"]
-                tag            = row["tag"]
-                handle = self.handle(tag, data_starttime, data_endtime)
+            for segment_id in _index.index.unique():
+                rows = _index.loc[[segment_id]]
+
+                # Make sure the sampling rate doesn't change mid stream.
+                assert len(rows["sampling_rate"].unique()) == 1
+
+                first_row = rows.iloc[0]
+                last_row = rows.iloc[-1]
+                sampling_rate = first_row["sampling_rate"]
+                data_starttime = first_row["starttime"]
+                data_endtime = last_row["endtime"]
                 istart = _sample_idx(starttime, data_starttime, sampling_rate)
-                iend   = _sample_idx(min(endtime, data_endtime), data_starttime, sampling_rate) + 1
-                jend   = jstart + (iend - istart)
-                data[..., jstart: jend] = self.root[handle][..., istart: iend]
-                jstart = jend
+                iend = (
+                    _sample_idx(
+                        min(endtime, data_endtime), data_starttime, sampling_rate
+                    )
+                    + 1
+                )
+                nsamples = iend - istart
+                offset = pd.to_timedelta(istart / sampling_rate, unit="S")
+                first_sample = data_starttime + offset
 
-            starttime = data_starttime + pd.to_timedelta(istart / sampling_rate, unit="S")
-            trace_idxs = np.arange(data.shape[0])
-            gathers.append(
-                gather.Gather(data, first_sample, sampling_rate, trace_idxs)
-            )
+                data, jstart = None, 0
+                for _, row in rows.iterrows():
+                    data_starttime = row["starttime"]
+                    data_endtime = row["endtime"]
+                    handle = build_handle(tag, data_starttime, data_endtime)
+                    istart = _sample_idx(starttime, data_starttime, sampling_rate)
+                    iend = (
+                        _sample_idx(
+                            min(endtime, data_endtime), data_starttime, sampling_rate
+                        )
+                        + 1
+                    )
+                    jend = jstart + (iend - istart)
+                    _key = (*key[1:-1], slice(istart, iend))
 
-        if len(gathers) == 1:
-            return (gathers[0])
-        else:
-            return (gathers)
+                    assert len(_key) == self.root[handle].ndim or Ellipsis in _key
+
+                    if data is None:
+                        shape = (
+                            *get_shape(self.root[handle].shape[:-1], _key[:-1]),
+                            nsamples,
+                        )
+                        data = np.empty(shape, dtype=self.root[handle].dtype)
+                    data[..., jstart:jend] = self.root[handle][_key]
+                    jstart = jend
+
+                starttime = data_starttime + pd.to_timedelta(
+                    istart / sampling_rate, unit="S"
+                )
+                trace_idxs = np.arange(data.shape[0])
+                _gather = gather.Gather(data, first_sample, sampling_rate, trace_idxs)
+                gathers[tag].append(_gather)
+
+        return gathers
 
 
-#def _iter_group(group):
-#    """
-#    Return a list of all data sets in group. Skip special "_index" group.
-#    """
-#    groups = list()
-#    for key in group:
-#        if isinstance(group[key], h5py.Group):
-#            if key[0] == "_":
-#                continue
-#            else:
-#                groups += _iter_group(group[key])
-#        else:
-#            groups.append("/".join((group.name, key)))
-#
-#    return (groups)
-#
-#
-#def _list_files(path):
-#    """
-#    Generator of paths to all files in `path` and its subdirectories.
-#    """
-#    for root, dirs, files in os.walk(path):
-#        for file in files:
-#            yield (pathlib.Path(root).joinpath(file))
-#
-#
-#def _repr_group(group, indent=""):
-#    s = ""
-#    for key in group:
-#        s += f"{indent}+--{key}\n"
-#        if isinstance(group[key], h5py.Group):
-#            s += _repr_group(group[key], indent=indent+"|--")
-#    return (s)
-#
-#
+def get_shape(shape, key):
+    new_shape = tuple()
+    imax = len(shape) if Ellipsis not in key else key.index(Ellipsis)
+    new_shape = tuple((get_slice_length(key[i], shape[i]) for i in range(imax)))
+    if imax < len(shape):
+        new_shape += shape[imax : imax + len(shape) - len(key) + 1]
+        new_shape += tuple(
+            (get_slice_length(key[i], shape[i]) for i in range(len(key) - 1, imax, -1))
+        )
+
+    return tuple(filter(lambda k: k is not None, new_shape))
+
+
+def get_slice_length(obj, max_len):
+    if obj == slice(None):
+        return max_len
+    if isinstance(obj, slice):
+        istart = 0 if obj.start is None else obj.start
+        iend = max_len if obj.stop is None else obj.stop
+        return iend - istart
+    if isinstance(obj, int):
+        return 0
+    raise ValueError
+
+
+def build_handle(tag, starttime, endtime):
+    """
+    Returns a properly formatted reference to data specified by
+    `tag`, `starttime`, and `endtime`.
+    """
+    tstart = strftime(starttime)
+    tend = strftime(endtime)
+    handle = "/".join((tag, f"__{tstart}__{tend}"))
+    handle = re.sub("//+", "/", handle)
+    handle = handle.lstrip("/")
+
+    return handle
+
+
 def _sample_idx(time, starttime, sampling_rate, right=False):
     """
     Get the index of a sample at a given time, relative to starttime.
@@ -476,13 +469,21 @@ def _sample_idx(time, starttime, sampling_rate, right=False):
     delta = (time - starttime).total_seconds()
 
     if delta < 0:
-
-        return (0)
-
+        return 0
+    if right is True:
+        idx = int(np.ceil(delta * sampling_rate))
     else:
-        if right is True:
-            idx = int(np.ceil(delta * sampling_rate))
-        else:
-            idx = int(np.floor(delta * sampling_rate))
+        idx = int(np.floor(delta * sampling_rate))
+    return idx
 
-    return (idx)
+
+def _get_time_fields(dataf):
+    is_datetime = pd.api.types.is_datetime64_any_dtype
+    return list(filter(lambda key: is_datetime(dataf[key]), dataf.columns))
+
+
+def strftime(time):
+    """
+    Return a formatted string representation of `time`.
+    """
+    return time.strftime("%Y%m%dT%H:%M:%S.%fZ")
