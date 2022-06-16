@@ -399,7 +399,7 @@ class WaveformAccessor(AccessorBase):
             new_tag = new_tag.lstrip("/")
 
         new_index = list()
-        
+
         with File(src_file, mode="r") as file:
             index = file.timeseries.index
             index = index[index["tag"].str.match(src_tag)]
