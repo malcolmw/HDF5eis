@@ -534,11 +534,11 @@ def get_shape(shape, key):
     new_shape = tuple((get_slice_length(key[i], shape[i]) for i in range(imax)))
     if imax < len(shape):
         new_shape += shape[imax : imax + len(shape) - len(key) + 1]
-        new_shape += tuple(
-            (get_slice_length(key[i], shape[i]) for i in range(len(key) - 1, imax, -1))
-        )
-
-    return tuple(filter(lambda k: k is not None, new_shape))
+        new_shape += tuple((
+            get_slice_length(key[i], shape[i])
+            for i in range(len(key) - 1, imax, -1)
+        ))
+    return tuple(filter(lambda k: k != 0, new_shape))
 
 
 def get_slice_length(obj, max_len):
