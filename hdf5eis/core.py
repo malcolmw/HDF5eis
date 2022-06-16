@@ -30,6 +30,28 @@ class File(h5py.File):
         """
         An h5py.File subclass for convenient I/O of big, multidimensional
         data from environmental sensors.
+
+        Parameters
+        ----------
+        *args :
+            These are passed directly to the super class initializer.
+            Must contain a file path (str or bytes) or a file-like
+            object.
+        overwrite : bool, optional
+            Whether or not to overwrite an existing file if one exists
+            at the given location. The default is False.
+        **kwargs :
+            These are passed directly to super class initializer.
+
+        Raises
+        ------
+
+            ValueError if mode="w" and file already exists.
+
+        Returns
+        -------
+        None.
+
         """
 
         if "mode" not in kwargs:
@@ -55,32 +77,66 @@ class File(h5py.File):
 
     @property
     def metadata(self):
+        """
+        Provides access to "/metadata" group and associated
+        functionality.
+
+        Returns
+        -------
+        hdf5eis.AuxiliaryAccessor
+            Provides access to "/metadata" group and associated
+            functionality.
+
+        """
         return self._metadata
 
     @property
     def products(self):
+        """
+        Provides access to "/products" group and associated
+        functionality.
+
+        Returns
+        -------
+        hdf5eis.AuxiliaryAccessor
+            Provides access to "/products" group and associated
+            functionality.
+
+        """
         return self._products
 
     @property
     def timeseries(self):
+        """
+        Provides access to "/times" group and associated
+        functionality.
+
+        Returns
+        -------
+        hdf5eis.AuxiliaryAccessor
+            Provides access to "/metadata" group and associated
+            functionality.
+
+        """
         return self._timeseries
 
     def list_datasets(self, group=None):
+class AccessorBase:
+    """
+    Abstract base class of Accessor classes.
+    """
+    def __init__(self, parent, root):
         """
-        Return a list of all data sets in group. Skip special "__INDEX" group.
-        """
-        if group is None:
-            group = self
-        elif isinstance(group, str):
+        Initializer.
             group = self[group]
 
-        groups = list()
-        for key in group:
-            if isinstance(group[key], h5py.Group):
-                if key == "__INDEX":
-                    continue
-                groups += self.list_datasets(group=group[key])
-            else:
+        Parameters
+        ----------
+        parent : h5py.File or h5py.Group
+            The parent of the group this accessor provides access to.
+        root : str
+            The name of group nested within parent this accessor
+            provides access to.
                 if group.name.split("/")[1] in ("products", "metadata"):
                     if group.name not in groups:
                         groups.append(group.name)
@@ -89,33 +145,64 @@ class File(h5py.File):
 
         return groups
 
+        Returns
+        -------
+        None.
 
-class AccessorBase:
-    def __init__(self, parent, root):
+        """
         self._parent = parent
-        self._root = root
+        self._root = self._parent.require_group(root)
 
     @property
     def parent(self):
+        """
+        The parent of the group to which this accessor provides access.
+
+        Returns
+        -------
+        h5py.File or h5py.Group
+            The parent of the group to which this accessor provides
+            access.
+
+        """
         return self._parent
 
     @property
     def root(self):
-        return self._parent.require_group(self._root)
+        """
+        The group to which this accessor provides access.
 
-    def link(self, src_file, src_path, key):
-        self.root[key] = h5py.ExternalLink(src_file, src_path)
+        Returns
+        -------
+        h5py.Group
+            The group to which this accessor provides access.
+        """
+        return self._root
+
 
     def add_table(self, dataf, key):
         """
         Add DataFrame `dataf` to root group under `key`.
+
+        Parameters
+        ----------
+        dataf : pandas.DataFrame
+            DataFrame to add to root group.
+        key : str
+            Key value under which to add table.
+
+        Returns
+        -------
+        None.
+
         """
         group = self.root.create_group(key)
         group.attrs["type"] = "TABLE"
 
-        self._write_table(dataf, key)
+        self.write_table(dataf, key)
 
-    def _write_table(self, dataf, key):
+
+    def write_table(self, dataf, key):
         for column in dataf.columns:
             self.write_column(dataf[column], key)
 
@@ -123,6 +210,7 @@ class AccessorBase:
             del self.root[f"{key}/__INDEX"]
 
         self.root[key].create_dataset("__INDEX", data=dataf.index.values)
+
 
     def write_column(self, column, key):
         """
@@ -157,6 +245,7 @@ class AccessorBase:
         datas = self.root[key].create_dataset(column.name, data=column.values)
         datas.attrs["__IS_UTC_DATETIME64"] = is_utc_datetime64
         datas.attrs["__IS_UTF8"] = is_utf8
+
 
     def read_table(self, key):
         group = self.root[key]
