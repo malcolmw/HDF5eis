@@ -361,7 +361,7 @@ class WaveformAccessor(AccessorBase):
         if "__TS_INDEX" not in self.root:
             self.add_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
         else:
-            self._write_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
+            self.write_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
 
     def link_tag(
         self,
