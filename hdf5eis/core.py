@@ -120,7 +120,7 @@ class File(h5py.File):
         """
         return self._timeseries
 
-    def list_datasets(self, group=None):
+
 class AccessorBase:
     """
     Abstract base class of Accessor classes.
@@ -128,7 +128,6 @@ class AccessorBase:
     def __init__(self, parent, root):
         """
         Initializer.
-            group = self[group]
 
         Parameters
         ----------
@@ -137,13 +136,6 @@ class AccessorBase:
         root : str
             The name of group nested within parent this accessor
             provides access to.
-                if group.name.split("/")[1] in ("products", "metadata"):
-                    if group.name not in groups:
-                        groups.append(group.name)
-                else:
-                    groups.append("/".join((group.name, key)))
-
-        return groups
 
         Returns
         -------
