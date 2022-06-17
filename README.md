@@ -1,4 +1,4 @@
-# HDF5eis (read HDF-size)
+# HDF5eis (read H-D-F-Size)
 A solution for handling big, multidimensional timeseries data from environmental sensors in HPC applications.
 
 ```python
