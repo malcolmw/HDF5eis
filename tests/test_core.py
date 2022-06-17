@@ -115,10 +115,10 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             self.assertTrue(my_string == accessor["string"])
 
 
-class TestWaveformAccessorClassMethods(unittest.TestCase):
+class TestTimeseriesAccessorClassMethods(unittest.TestCase):
     def test_add(self):
         with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
-            accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+            accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
             self._test_float_io(accessor)
             self._test_int_io(accessor)
             
@@ -135,7 +135,7 @@ class TestWaveformAccessorClassMethods(unittest.TestCase):
             master_path = temp_dir.joinpath("master.hdf5")
             for ipath, path in enumerate((path1, path2, path3, path4)):
                 with h5py.File(path, mode="w") as file:
-                    accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+                    accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
                     accessor.add(
                         np.random.rand(*shape).astype(np.float32),
                         now,
@@ -143,7 +143,7 @@ class TestWaveformAccessorClassMethods(unittest.TestCase):
                         tag=f"file{ipath+1}"
                     )
             with h5py.File(master_path, mode="w") as file:
-                accessor = hdf5eis.core.WaveformAccessor(file, "/timeseries")
+                accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
                 accessor.link_tag(path1, "file1")
                 accessor.link_tag(
                     path2, 
