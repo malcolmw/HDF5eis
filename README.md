@@ -19,11 +19,5 @@ with hdf5eis.File("demo.hdf5", mode="w") as demo_file:
     # Data can be efficiently retrieved using hybrid dictionary-like and array
     # slicing syntax.
     start_time, end_time = "2022-01-01T00:01:00Z", "2022-01-01T00:02:00Z"
-    sliced_data = demo_file.timeseries[
-        "random", # This is the tag of the requested data. Regular expressions permitted.
-        8:12,     # This is a slice along the first storage axis.
-        ...,      # This is a complete slice along all intermediate storage axes.
-        0,        # This is a slice along the second to last storage axis.
-        start_time: end_time # This is a slice along the time axis.
-    ]
+    sliced_data = demo_file.timeseries["random", 8:12, ..., 0, start_time: end_time]
 ```
