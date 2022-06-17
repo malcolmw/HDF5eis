@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 # Local imports
-from . import gather
+from . import gather as gm
 
 
 TS_INDEX_COLUMNS = ["tag", "start_time", "end_time", "sampling_rate", "npts"]
@@ -524,17 +524,16 @@ class TimeseriesAccessor(AccessorBase):
 
         new_index = list()
 
-        with File(src_file, mode="r") as file:
-            index = file.timeseries.index
+        with h5py.File(src_file, mode="r") as file:
+            accessor = TimeseriesAccessor(file, "/timeseries")
+            index = accessor.index
             index = index[index["tag"].str.match(src_tag)]
 
             for _, row in index.iterrows():
-                src_handle = "/".join(
-                    (
-                        "/timeseries",
-                        build_handle(row["tag"], row["start_time"], row["end_time"]),
-                    )
-                )
+                src_handle = "/".join((
+                    "/timeseries",
+                    build_handle(row["tag"], row["start_time"], row["end_time"]),
+                ))
                 new_handle = "/".join((new_tag, src_handle.rsplit("/", maxsplit=1)[-1]))
                 self.root[new_handle] = h5py.ExternalLink(src_file, src_handle)
                 row["tag"] = "/".join((new_tag, row["tag"].lstrip(src_tag))).strip("/")
@@ -561,6 +560,179 @@ class TimeseriesAccessor(AccessorBase):
         start_time = pd.to_datetime(key[-1].start, utc=True)
         end_time = pd.to_datetime(key[-1].stop, utc=True)
 
+        index = self.reduce_index(tag, start_time, end_time)
+
+        # Read data for each tag.
+        gathers = dict()
+
+        for tag in index["tag"].unique():
+            gathers[tag] = list()
+
+            gathers[tag] = self.read_data(
+                index[index["tag"] == tag],
+                start_time,
+                end_time,
+                key
+            )
+
+        return gathers
+
+
+    def read_data(self, index, start_time, end_time, key):
+        """
+        Read data between start and end time with respect to the given
+        index and key.
+
+        Parameters
+        ----------
+        index : pandas.DataFrame
+            A subset of self.index corresponding to the requested data.
+            This DataFrame is the return value of self.reduce_index().
+            Every continuous block of data associated with a single tag
+            needs to have a unique segment ID. The index of this
+            DataFrame must be the segment ID.
+        start_time : pandas.Timestamp
+            The time of the earliest sample requested.
+        end_time : pandas.Timestamp
+            The time of the latest sample requested.
+        key : tuple
+            A tuple of slice indexes with which to slice the data along
+            each axis except the last (time) axis.
+
+        Returns
+        -------
+        gathers : list
+            A list of hdf5eis.Gather objects containing requested data.
+
+        """
+        gathers = list()
+
+        for segment_id in index.index.unique():
+
+            gathers.append(
+                self.read_segment(
+                    index.loc[[segment_id]],
+                    start_time,
+                    end_time,
+                    key
+                )
+            )
+
+        return gathers
+
+    def read_segment(self, rows, start_time, end_time, key):
+        """
+        Read the continuous segment of data corresponding to the given
+        set of index rows and between given start and end times.
+
+        Parameters
+        ----------
+        rows : pandas.DataFrame
+            A set of index rows for a continuous segment of data. These
+            should be the rows corresponding to a single segment ID as
+            determined by self.reduce_index().
+        start_time : pandas.Timestamp
+            Time of the first requested sample.
+        end_time : pandas.Timestamp
+            Time of the last requested sample.
+        key : tuple
+            Slice index with which to slice the data being read. These
+            slices will be applied along every storage axis except the
+            last (time) axis.
+
+        Returns
+        -------
+        hdf5eis.Gather
+            An hdf5eis.Gather object containing the requested continuous
+            segment of data.
+
+        """
+        # Make sure the sampling rate doesn't change mid stream.
+        assert len(rows["sampling_rate"].unique()) == 1
+
+        nsamples, first_sample = determine_segment_sample_range(
+            rows,
+            start_time,
+            end_time
+        )
+        sampling_rate = rows.iloc[0]["sampling_rate"]
+
+        data, jstart = None, 0
+        for _, row in rows.iterrows():
+            sample_range = (
+                _sample_idx(
+                    start_time,
+                    row["start_time"],
+                    row["sampling_rate"]
+                ),
+                (
+                    _sample_idx(
+                        min(end_time, row["end_time"]),
+                        row["start_time"],
+                        row["sampling_rate"]
+                    )
+                    + 1
+                )
+            )
+            handle_key = (
+                build_handle(
+                    key[0],
+                    row["start_time"],
+                    row["end_time"]
+                ),
+                (*key[1:-1], slice(*sample_range))
+            )
+
+            assert (
+                len(handle_key[1]) == self.root[handle_key[0]].ndim
+                or
+                Ellipsis in handle_key[1]
+            )
+
+            if data is None:
+                shape = (
+                    *get_shape(
+                        self.root[handle_key[0]].shape[:-1],
+                        handle_key[1][:-1]
+                    ),
+                    nsamples,
+                )
+                data = np.empty(shape, dtype=self.root[handle_key[0]].dtype)
+            data[
+                ...,
+                jstart: jstart+sample_range[1]-sample_range[0]
+            ] = self.root[handle_key[0]][handle_key[1]]
+            jstart += sample_range[1]-sample_range[0]
+
+        return gm.Gather(
+            data,
+            first_sample,
+            sampling_rate,
+            np.arange(data.shape[0])
+        )
+
+
+    def reduce_index(self, tag, start_time, end_time):
+        """
+        Reduce the index to the set of rows referring to data between
+        the given start and endtimes and matching the given tag.
+
+        Parameters
+        ----------
+        tag : str
+            Tag of requested data. Regular expressions are valid here.
+        start_time : pandas.Timestamp
+            The start time of the requested data.
+        end_time : pandas.Timestamp
+            The end time of the requested data.
+
+        Returns
+        -------
+        index : pandas.DataFrame
+            The set of rows from self.index matching the given tag and
+            time range.
+
+        """
         index = self.index
         if index is None:
             warnings.warn("The timeseries index is empty.")
@@ -570,84 +742,68 @@ class TimeseriesAccessor(AccessorBase):
         index = index[index["tag"].str.fullmatch(tag)]
 
         # Find datasets within requested time range.
-        index = index[(index["start_time"] < end_time) & (index["end_time"] > start_time)]
+        index = index[
+             (index["start_time"] < end_time)
+            &(index["end_time"] > start_time)
+        ]
 
         if len(index) == 0:
             warnings.warn("No data found for specified tag and time range.")
             return None
 
-        # Read data for each tag.
-        gathers = dict()
+        # Sort values by time.
+        index = index.sort_values("start_time")
 
-        for tag in index["tag"].unique():
-            gathers[tag] = list()
-            _index = index[index["tag"] == tag]
+        sampling_interval = pd.to_timedelta(1 / index["sampling_rate"], unit="S")
+        delta = index["start_time"] - index.shift(1)["end_time"]
 
-            # Sort values by time.
-            _index = _index.sort_values("start_time")
+        index["segment_id"] = (delta != sampling_interval).cumsum()
+        index = index.set_index("segment_id")
 
-            sampling_interval = pd.to_timedelta(1 / _index["sampling_rate"], unit="S")
-            delta = _index["start_time"] - _index.shift(1)["end_time"]
+        return index
 
-            _index["segment_id"] = (delta != sampling_interval).cumsum()
-            _index = _index.set_index("segment_id")
 
-            for segment_id in _index.index.unique():
-                rows = _index.loc[[segment_id]]
+def determine_segment_sample_range(rows, start_time, end_time):
+    """
+    Determine the number of samples and time of the first sample
+    for data available in given rows between given start and times.
 
-                # Make sure the sampling rate doesn't change mid stream.
-                assert len(rows["sampling_rate"].unique()) == 1
+    Parameters
+    ----------
+    rows : pandas.DataFrame
+        Index rows corresponding to a single continuous data segment.
+        This should be a subset of index rows returned by
+        hdf5eis.TimeseriesAccessor.reduce_rows() with a single, unique
+        segment ID.
+    start_time : pandas.Timestamp
+        The time of the first requested sample.
+    end_time : pandas.Timestamp
+        The time of the last requested sample.
 
-                first_row = rows.iloc[0]
-                last_row = rows.iloc[-1]
-                sampling_rate = first_row["sampling_rate"]
-                data_start_time = first_row["start_time"]
-                data_end_time = last_row["end_time"]
-                istart = _sample_idx(start_time, data_start_time, sampling_rate)
-                iend = (
-                    _sample_idx(
-                        min(end_time, data_end_time), data_start_time, sampling_rate
-                    )
-                    + 1
-                )
-                nsamples = iend - istart
-                offset = pd.to_timedelta(istart / sampling_rate, unit="S")
-                first_sample = data_start_time + offset
+    Returns
+    -------
+    nsamples : int
+        The number of available samples in the specified time range.
+    first_sample : pandas.Timestamp
+        The time of the first available sample in the specified time
+        range.
 
-                data, jstart = None, 0
-                for _, row in rows.iterrows():
-                    data_start_time = row["start_time"]
-                    data_end_time = row["end_time"]
-                    handle = build_handle(tag, data_start_time, data_end_time)
-                    istart = _sample_idx(start_time, data_start_time, sampling_rate)
-                    iend = (
-                        _sample_idx(
-                            min(end_time, data_end_time), data_start_time, sampling_rate
-                        )
-                        + 1
-                    )
-                    jend = jstart + (iend - istart)
-                    _key = (*key[1:-1], slice(istart, iend))
+    """
+    sampling_rate = rows.iloc[0]["sampling_rate"]
+    data_start_time = rows.iloc[0]["start_time"]
+    data_end_time = rows.iloc[-1]["end_time"]
+    istart = _sample_idx(start_time, data_start_time, sampling_rate)
+    iend = (
+        _sample_idx(
+            min(end_time, data_end_time), data_start_time, sampling_rate
+        )
+        + 1
+    )
+    nsamples = iend - istart
+    offset = pd.to_timedelta(istart / sampling_rate, unit="S")
+    first_sample = data_start_time + offset
 
-                    assert len(_key) == self.root[handle].ndim or Ellipsis in _key
-
-                    if data is None:
-                        shape = (
-                            *get_shape(self.root[handle].shape[:-1], _key[:-1]),
-                            nsamples,
-                        )
-                        data = np.empty(shape, dtype=self.root[handle].dtype)
-                    data[..., jstart:jend] = self.root[handle][_key]
-                    jstart = jend
-
-                start_time = data_start_time + pd.to_timedelta(
-                    istart / sampling_rate, unit="S"
-                )
-                trace_idxs = np.arange(data.shape[0])
-                _gather = gather.Gather(data, first_sample, sampling_rate, trace_idxs)
-                gathers[tag].append(_gather)
-
-        return gathers
+    return (nsamples, first_sample)
 
 
 def get_shape(shape, key):
