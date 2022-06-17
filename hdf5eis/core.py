@@ -405,7 +405,7 @@ class TimeseriesAccessor(AccessorBase):
     def index(self, value):
         self._index = value
 
-    def add(self, data, start_time, sampling_rate, tag="", flush_index=True, **kwargs):
+    def add(self, data, start_time, sampling_rate, tag="", **kwargs):
         """
         Add timeseries data to the parent HDF5eis file.
 
@@ -422,10 +422,6 @@ class TimeseriesAccessor(AccessorBase):
             second.
         tag : str, optional
             Tag to associate with data. The default is "".
-        flush_index : bool, optional
-            Whether to flush the index to disk immediately after
-            writing. This should left to the default value unless you
-            know what you are doing. The default is True.
         **kwargs :
             Additional keyword arguments are passed directly the
             h5py.Group.create_datset() method and can be used, for
@@ -444,7 +440,6 @@ class TimeseriesAccessor(AccessorBase):
             start_time,
             sampling_rate,
             tag=tag,
-            flush_index=flush_index,
             **kwargs,
         )
 
@@ -452,7 +447,7 @@ class TimeseriesAccessor(AccessorBase):
 
 
     def create_dataset(
-        self, shape, start_time, sampling_rate, tag="", flush_index=True, **kwargs
+            self, shape, start_time, sampling_rate, tag="", **kwargs
     ):
         """
         Returns an empty dataset.
@@ -470,9 +465,7 @@ class TimeseriesAccessor(AccessorBase):
             columns=TS_INDEX_COLUMNS,
         )
         self.index = pd.concat([self.index, row], ignore_index=True)
-
-        if flush_index is True:
-            self.flush_index()
+        self.flush_index()
 
         return self.root[handle]
 
@@ -496,8 +489,7 @@ class TimeseriesAccessor(AccessorBase):
         src_tag,
         prefix=None,
         suffix=None,
-        new_tag=None,
-        flush_index=True
+        new_tag=None
     ):
         """
         Links timeseries data from an external file to the current file.
@@ -514,9 +506,6 @@ class TimeseriesAccessor(AccessorBase):
             Suffix for new tag. The default is None.
         new_tag : str, optional
             New tag. The default is None.
-        flush_index : bool, optional
-            Flush the index to disk. This should be set to True unless
-            you know what you are doing. The default is True.
 
         Returns
         -------
@@ -552,9 +541,7 @@ class TimeseriesAccessor(AccessorBase):
                 new_index.append(row)
 
         self.index = pd.concat([self.index, pd.DataFrame(new_index)], ignore_index=True)
-
-        if flush_index is True:
-            self.flush_index()
+        self.flush_index()
 
     def __getitem__(self, key):
         """
