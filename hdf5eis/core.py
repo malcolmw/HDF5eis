@@ -676,7 +676,7 @@ class TimeseriesAccessor(AccessorBase):
             )
             handle_key = (
                 build_handle(
-                    key[0],
+                    row["tag"],
                     row["start_time"],
                     row["end_time"]
                 ),
