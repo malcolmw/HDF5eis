@@ -21,7 +21,8 @@ with hdf5eis.File("demo.hdf5", mode="w") as demo_file:
         tag="random"
     )
     
-    # Data can be efficiently retrieved using hybrid dictionary and array metaphors.
+    # Data can be efficiently retrieved using hybrid dictionary (with regular expression parsing)
+    # and array metaphors.
     start_time, end_time = "2022-01-01T00:01:00Z", "2022-01-01T00:02:00Z"
-    sliced_data = demo_file.timeseries["random", 8:12, ..., 0, start_time: end_time]
+    sliced_data = demo_file.timeseries["rand*", 8:12, ..., 0, start_time: end_time]
 ```
