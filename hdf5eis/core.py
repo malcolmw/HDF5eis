@@ -459,7 +459,31 @@ class TimeseriesAccessor(AccessorBase):
             self, shape, start_time, sampling_rate, tag="", **kwargs
     ):
         """
-        Returns an empty dataset.
+        Create and return an empty data set.
+
+        Parameters
+        ----------
+        shape : tuple
+            The shape of the empty data set.
+        start_time : str, int, float, or pandas.Timestamp
+            The UTC time of the first sample in data. This value is
+            internally converted to a pandas.Timestamp by
+            pandas.to_datetime().
+        sampling_rate : int, float
+            The temporal sampling rate of data in units of samples per
+            second.
+        tag : str, optional
+            Tag to associate with data. The default is "".
+        **kwargs : TYPE
+            Additional keyword arguments are passed directly the
+            h5py.Group.create_datset() method and can be used, for
+            example, to choose the chunk layout and compression options.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
         """
         sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
         nsamples = shape[-1]
