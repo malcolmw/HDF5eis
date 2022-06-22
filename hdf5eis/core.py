@@ -240,7 +240,16 @@ class AccessorBase:
 
         """
         is_utc_datetime64 = pd.api.types.is_datetime64_any_dtype(column)
-        is_utf8 = hasattr(column.dtype, "char") and column.dtype.char == np.dtype("S")
+        if hasattr(column.dtype, "char") and column.dtype.char == np.dtype("S"):
+            is_utf8 = True
+        elif column.dtype is np.dtype("O"):
+            is_utf8 = True
+            warnings.warn(
+                f"\"{column.name}\" column has dtype = np.dtype(\"O\"). "
+                f"Interpreting as UTF-8 encoded bytes."
+            )
+        else:
+            is_utf8 = False
 
         if is_utc_datetime64:
             if column.dt.tz is None:
