@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Ingest Sage Brush Flats Nodal Experiment miniSEED data. Data are stored
+in a YEAR/JDAY directory structure with names like 
+STA.CHAN.YEAR.JDAY.HH.MM.SS (e.g., R3708.EHZ.2014.129.00.00.00). The
+first two digits in the station name correspond to the "column" of the
+2D array layout, and the second two correspong to the "row".
+
+Created on Wed Jun 15 11:29:34 2022
+
+@author: malcolmw
+"""
+# Standard library imports
+import pathlib
+
+# Third-party imports
+import numpy as np
+import obspy
+import pandas as pd
+
+import hdf5eis
+
+# Constants
+ARRAY_SHAPE = (20, 70)
+FILE_LENGTH = "H"
+CHUNKS = (4, 4, 1000)
+COMPRESSION = "gzip"
+COMPRESSION_OPTS = 3
+START_TIME = pd.to_datetime("2014-05-22T00:00:00Z")
+END_TIME   = pd.to_datetime("2014-06-09T00:00:00Z")
+OUTPUT_DIR = pathlib.Path("/mnt/hdd/sgb/wfs/hdf5")
+INPUT_DIR = pathlib.Path("/mnt/hdd/sgb/wfs")
+SAMPLING_RATE = 500
+
+def main():
+    file_boundaries = pd.date_range(
+        start=START_TIME, 
+        end=END_TIME, 
+        freq=FILE_LENGTH
+    )
+    for start_time, end_time in zip(file_boundaries[:-1], file_boundaries[1:]):
+        print(f"Processing data between {start_time} and {end_time}.")
+        stream = read_data(start_time, end_time, INPUT_DIR)
+        data_array, start_time = stream_to_array(stream, ARRAY_SHAPE, start_time)
+        print(f"Shape of data array: {data_array.shape}.")
+        print(f"Start time: {start_time}.")
+        write_array(data_array, start_time, OUTPUT_DIR)
+
+
+def read_data(start_time, end_time, input_dir):
+    start_time = obspy.UTCDateTime(start_time)
+    end_time = obspy.UTCDateTime(end_time) - 1e-6
+    stream = obspy.read(
+        input_dir.joinpath(str(start_time.year), str(start_time.julday), "*"),
+        starttime=start_time,
+        endtime=end_time,
+        nearest_sample=False
+    )
+    return stream
+
+
+def stream_to_array(stream, array_shape, start_time):
+    """
+    Convert obspy.Stream object to numpy.ndarray.
+
+    Parameters
+    ----------
+    stream : TYPE
+        DESCRIPTION.
+    array_shape : TYPE
+        DESCRIPTION.
+    start_time : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    data_array : TYPE
+        DESCRIPTION.
+
+    """
+    start_time = max(
+        obspy.UTCDateTime(start_time),
+        min([trace.stats.starttime for trace in stream])
+    )
+    nsamples = max([trace.stats.npts for trace in stream])
+    data_array = np.zeros(
+        (*array_shape, nsamples),
+        dtype=np.int32
+    )
+    for trace in stream:
+        icol = int(trace.stats.station[1:3])
+        irow = int(trace.stats.station[3:5])
+        istart = int((trace.stats.starttime - start_time) * 500)
+        data_array[irow-1, icol-1, istart: istart+trace.stats.npts] = trace.data
+    start_time = pd.to_datetime(start_time.timestamp*1e9, utc=True)
+    return (data_array, start_time)
+
+
+def write_array(data_array, start_time, output_dir):
+    path = output_dir.joinpath(
+        f"{start_time.year}",
+        f"{start_time.dayofyear:03d}",
+        start_time.strftime("%Y%jT%H%M%SZ.hdf5")
+    )
+    path.parent.mkdir(exist_ok=True, parents=True)
+    with hdf5eis.File(path, mode="w") as output_file:
+        output_file.timeseries.add(
+            data_array,
+            start_time,
+            SAMPLING_RATE,
+            tag="raw"
+        )
+
+
+if __name__ == "__main__":
+    main()
