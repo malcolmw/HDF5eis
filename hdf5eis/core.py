@@ -565,14 +565,25 @@ class TimeseriesAccessor(AccessorBase):
             for _, row in index.iterrows():
                 src_handle = "/".join((
                     "/timeseries",
-                    build_handle(row["tag"], row["start_time"], row["end_time"]),
+                    build_handle(
+                        row["tag"], 
+                        row["start_time"], 
+                        row["end_time"]
+                    ),
                 ))
-                new_handle = "/".join((new_tag, src_handle.rsplit("/", maxsplit=1)[-1]))
+                new_handle = "/".join(
+                    (new_tag, src_handle.rsplit("/", maxsplit=1)[-1])
+                )
                 self.root[new_handle] = h5py.ExternalLink(src_file, src_handle)
-                row["tag"] = "/".join((new_tag, row["tag"].lstrip(src_tag))).strip("/")
+                row["tag"] = "/".join(
+                    (new_tag, row["tag"].lstrip(src_tag))
+                ).strip("/")
                 new_index.append(row)
 
-        self.index = pd.concat([self.index, pd.DataFrame(new_index)], ignore_index=True)
+        self.index = pd.concat(
+            [self.index, pd.DataFrame(new_index)],
+            ignore_index=True
+        )
         self.flush_index()
 
     def __getitem__(self, key):
