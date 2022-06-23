@@ -30,5 +30,5 @@ with hdf5eis.File("demo.hdf5", mode="w") as demo_file:
 # Installation
 
 ```bash
-pip install .
+>$ pip install .
 ```
