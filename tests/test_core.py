@@ -22,7 +22,10 @@ import hdf5eis
 class TestAccessorBaseClassMethods(unittest.TestCase):
 
     def test_column_io(self):
-        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
+        with (
+                tempfile.TemporaryFile() as tmp_file, 
+                h5py.File(tmp_file, mode="w") as file
+        ):
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.root.create_group("TEST")
             # Test float IO
@@ -33,11 +36,15 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             self._test_string_io(accessor)
             # Test DateTime IO
             self._test_datetime_io(accessor)
+        # print(file)
 
     def test_table_io(self):
         dataf = random_table(1024)
 
-        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
+        with (
+                tempfile.TemporaryFile() as tmp_file, 
+                h5py.File(tmp_file, mode="w") as file
+        ):
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.add_table(dataf, "TEST")
             columns = np.sort(dataf.columns)
@@ -101,7 +108,10 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
 class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
     def test_add(self):
-        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
+        with (
+                tempfile.TemporaryFile() as tmp_file, 
+                h5py.File(tmp_file, mode="w") as file
+        ):
             accessor = hdf5eis.core.AuxiliaryAccessor(file, "/root")
             dataf = random_table(1024)
             accessor.add(dataf, "TEST")
@@ -117,7 +127,10 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
 
 class TestTimeseriesAccessorClassMethods(unittest.TestCase):
     def test_add(self):
-        with h5py.File(tempfile.TemporaryFile(), mode="w") as file:
+        with (
+                tempfile.TemporaryFile() as tmp_file, 
+                h5py.File(tmp_file, mode="w") as file
+        ):
             accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
             self._test_float_io(accessor)
             self._test_int_io(accessor)
