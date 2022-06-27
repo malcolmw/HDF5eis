@@ -14,7 +14,7 @@ def configure():
             multidimensional timeseries data from environmental sensors""",
             "download_url": "https://github.com/malcolmw/HDF5eis.git",
             "platforms": ["linux"],
-            "requires": ["h5py", "numpy", "pandas", "scipy"],
+            "install_requires": ["h5py", "matplotlib", "numpy", "pandas", "scipy"],
             "packages": ["hdf5eis"]
             }
     return(kwargs)
