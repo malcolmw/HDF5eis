@@ -566,8 +566,8 @@ class TimeseriesAccessor(AccessorBase):
                 src_handle = "/".join((
                     "/timeseries",
                     build_handle(
-                        row["tag"], 
-                        row["start_time"], 
+                        row["tag"],
+                        row["start_time"],
                         row["end_time"]
                     ),
                 ))
@@ -920,17 +920,19 @@ def build_handle(tag, start_time, end_time):
 
     Parameters
     ----------
-    tag : TYPE
-        DESCRIPTION.
-    start_time : TYPE
-        DESCRIPTION.
-    end_time : TYPE
-        DESCRIPTION.
+    tag : str
+        The tag associated with the data.
+    start_time : pandas.Timestamp
+        The time of the first sample in the array for which the handle
+        is being built.
+    end_time : pandas.Timestamp
+        The time of the last sample in the array for which the handle 
+        is being built.
 
     Returns
     -------
-    handle : TYPE
-        DESCRIPTION.
+    handle : str
+        The address of the data relative to the accessor root.
 
     """
     tstart = strftime(start_time)
@@ -945,6 +947,26 @@ def build_handle(tag, start_time, end_time):
 def _sample_idx(time, start_time, sampling_rate, right=False):
     """
     Get the index of a sample at a given time, relative to start_time.
+
+    Parameters
+    ----------
+    time : pandas.Timestamp
+        Time of sample to index.
+    start_time : pandas.Timestamp
+        Time of first sample in the array being indexed.
+    sampling_rate : int, float
+        Sampling rate (in units of samples per second) of array being
+        indexed.
+    right : bool, optional
+        Return the index of the sample to the immediate right of the
+        provided time if it falls in between samples. The default is
+        False.
+
+    Returns
+    -------
+    int
+        The index of the sample corresponding to the provided time.
+
     """
     time = pd.to_datetime(time, utc=True)
     delta = (time - start_time).total_seconds()
@@ -959,6 +981,21 @@ def _sample_idx(time, start_time, sampling_rate, right=False):
 
 
 def _get_time_fields(dataf):
+    """
+    Return list of column names with datetime-like dtype.
+
+    Parameters
+    ----------
+    dataf : pandas.DataFrame
+        DataFrame from which to extract names of columns with 
+        datetime-like dtype.
+
+    Returns
+    -------
+    list
+        List of column names with datetime-like dtype.
+
+    """
     is_datetime = pd.api.types.is_datetime64_any_dtype
     return list(filter(lambda key: is_datetime(dataf[key]), dataf.columns))
 
@@ -966,5 +1003,17 @@ def _get_time_fields(dataf):
 def strftime(time):
     """
     Return a formatted string representation of `time`.
+
+    Parameters
+    ----------
+    time : pandas.Timestamp
+        Time to convert to string representation.
+
+    Returns
+    -------
+    str
+        String representation of time formatted like 
+        "%Y%m%dT%H:%M:%S.%fZ".
+
     """
     return time.strftime("%Y%m%dT%H:%M:%S.%fZ")
