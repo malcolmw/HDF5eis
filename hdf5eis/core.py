@@ -751,8 +751,7 @@ class TimeseriesAccessor(AccessorBase):
         return gm.Gather(
             data,
             first_sample,
-            sampling_rate,
-            np.arange(data.shape[0])
+            sampling_rate
         )
 
 
