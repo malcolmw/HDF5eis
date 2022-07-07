@@ -74,8 +74,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
                 np.random.randint(
                     np.iinfo(dtype).min,
                     np.iinfo(dtype).max,
-                    size=(1024,)
-                ).astype(dtype),
+                    size=(1024,),
+                    dtype=dtype
+                ),
                 name=str(dtype)
             )
             accessor.write_column(data, "TEST")
@@ -211,8 +212,9 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
             data_out = np.random.randint(
                 np.iinfo(dtype).min,
                 np.iinfo(dtype).max,
-                size=shape
-            ).astype(dtype)
+                size=shape,
+                dtype=dtype
+            )
             accessor.add(
                 data_out,
                 now,
@@ -248,8 +250,9 @@ def random_table(nrows):
         dataf[str(dtype)] = np.random.randint(
             np.iinfo(dtype).min,
             np.iinfo(dtype).max,
-            (nrows,)
-        ).astype(dtype)
+            (nrows,),
+            dtype=dtype
+        )
 
     dataf["string"] = random_strings(nrows)
     dataf["time"] = random_times(nrows)
@@ -261,7 +264,8 @@ def random_times(ntimes):
             np.random.randint(
                 0,
                 pd.Timestamp.now().timestamp(),
-                size=(ntimes,)
+                size=(ntimes,),
+                dtype=np.int64
             )*1e9,
             utc=True
         ),
