@@ -17,7 +17,7 @@ def configure():
             "install_requires": ["h5py", "matplotlib", "numpy", "pandas", "scipy"],
             "packages": ["hdf5eis"]
             }
-    return(kwargs)
+    return kwargs
 
 if __name__ == "__main__":
     kwargs = configure()
