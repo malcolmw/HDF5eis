@@ -54,7 +54,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             ))
 
     def _test_float_io(self, accessor):
-        for dtype in (np.float16, np.float32, np.float64, np.float128):
+        for dtype in (np.float16, np.float32, np.float64):
             data = pd.Series(
                 np.random.rand(1024).astype(dtype),
                 name=str(dtype)
@@ -191,7 +191,7 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
         now = pd.Timestamp.now(tz="UTC")
         delta = pd.to_timedelta(1/100, unit="S")
         data_out = np.random.rand(*shape)
-        for dtype in (np.float16, np.float32, np.float64, np.float128):
+        for dtype in (np.float16, np.float32, np.float64):
             accessor.add(
                 data_out.astype(dtype),
                 now,
@@ -242,7 +242,7 @@ def random_strings(nstrings):
 
 def random_table(nrows):
     dataf = pd.DataFrame()
-    for dtype in (np.float16, np.float32, np.float64, np.float128):
+    for dtype in (np.float16, np.float32, np.float64):
         dataf[str(dtype)] = np.random.rand(nrows).astype(dtype)
     for dtype in (np.int8, np.int16, np.int32, np.int64):
         dataf[str(dtype)] = np.random.randint(
