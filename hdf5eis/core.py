@@ -1302,8 +1302,17 @@ def strftime(time):
     Returns
     -------
     str
-        String representation of time formatted like 
-        "%Y%m%dT%H:%M:%S.%fZ".
+        String representation of time formatted like
+        '%Y%m%dT%H:%M:%S.%nZ'.
 
-    """
-    return time.strftime("%Y%m%dT%H:%M:%S.%fZ")
+    '''
+    return ''.join((
+        f'{time.year:4d}',
+        f'{time.month:02d}',
+        f'{time.day:02d}',
+        f'T{time.hour:02d}',
+        f':{time.minute:02d}',
+        f':{time.second:02d}',
+        f'.{time.microsecond:06d}',
+        f'{time.nanosecond:03d}'
+    ))
