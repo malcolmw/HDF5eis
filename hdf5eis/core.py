@@ -16,7 +16,7 @@ from ._version import __version__
 from . import exceptions
 from . import gather as gm
 
-
+NULL_UTF8_FORMAT = 'README'
 STRING_DTYPE = h5py.string_dtype(encoding='utf-8')
 TS_INDEX_COLUMNS = ['tag', 'start_time', 'end_time', 'sampling_rate', 'npts']
 TS_INDEX_DTYPES = {
@@ -437,10 +437,10 @@ class AuxiliaryAccessor(AccessorBase):
         if dtype == 'TABLE':
             return self.read_table(key)
         if dtype == 'UTF-8':
-            return self.root[key][0].decode()
+            return self.root[key][0].decode(), self.root[key].attrs['__FORMAT']
         raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
-    def add(self, obj, key):
+    def add(self, obj, key, fmt=NULL_UTF8_FORMAT):
         '''
         Add a table or UTF-8 encoded byte stream to the root group.
 
@@ -460,9 +460,9 @@ class AuxiliaryAccessor(AccessorBase):
         if isinstance(obj, pd.DataFrame):
             self.add_table(obj, key)
         elif isinstance(obj, (str, bytes)):
-            self.add_utf8(obj, key)
+            self.add_utf8(obj, key, fmt=fmt)
 
-    def add_utf8(self, data, key):
+    def add_utf8(self, data, key, fmt=NULL_UTF8_FORMAT):
         '''
         Add UTF-8 encoded data to root group under key.
 
@@ -482,6 +482,7 @@ class AuxiliaryAccessor(AccessorBase):
             key, data=[data], dtype=STRING_DTYPE
         )
         self.root[key].attrs['__TYPE'] = 'UTF-8'
+        self.root[key].attrs['__FORMAT'] = fmt
 
     def link(self, src_file, src_path, key):
         '''
@@ -534,6 +535,10 @@ class AuxiliaryAccessor(AccessorBase):
             if dtype != STRING_DTYPE:
                 raise(exceptions.UTF8FormatError(
                     f'UTF-8 encoded string has the wrong dtype(={dtype}).'
+                ))
+            if not '__FORMAT' in self.root[name].attrs:
+                raise(exceptions.UTF8FormatError(
+                    'UTF-8 encoded string has no __FORMAT specified.'
                 ))
 
 
