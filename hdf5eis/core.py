@@ -277,9 +277,9 @@ class AccessorBase:
         -------
         None.
 
-        """
+        '''
         group = self.root.create_group(key)
-        group.attrs["type"] = "TABLE"
+        group.attrs['__TYPE'] = 'TABLE'
 
         self.write_table(dataf, key)
 
@@ -454,7 +454,7 @@ class AuxiliaryAccessor(AccessorBase):
         Read the item under `key` from this group.
         """
 
-        dtype = self.root[key].attrs["type"]
+        dtype = self.root[key].attrs['__TYPE']
 
         if dtype == "TABLE":
             return self.read_table(key)
@@ -503,7 +503,7 @@ class AuxiliaryAccessor(AccessorBase):
         self.root.create_dataset(
             key, data=[data], dtype=STRING_DTYPE
         )
-        self.root[key].attrs["type"] = "UTF-8"
+        self.root[key].attrs['__TYPE'] = 'UTF-8'
 
     def link(self, src_file, src_path, key):
         """
