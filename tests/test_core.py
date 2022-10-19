@@ -124,6 +124,87 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             my_string = random_string(max_length=8192)
             accessor.add(my_string, "string")
             self.assertTrue(my_string == accessor["string"])
+            
+    def test_validate(self):
+        with (
+                tempfile.TemporaryFile() as tmp_file, 
+                h5py.File(tmp_file, mode="w") as file
+        ):
+            accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
+            # Ensure that properly formatted tables don't raise an error.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            accessor.validate()
+            del(accessor.root['TEST'])
+            
+            # Add a column with a bad length and ensure it raises a 
+            # TableFormatError.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            accessor.root.create_dataset(
+                'TEST/Bad Column', 
+                data=np.random.rand(1025)
+            )
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+                
+            # Delete __IS_UTC_DATETIME64 Attribute from one column and ensure
+            # that TableFormatError is raised.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            del(accessor.root['TEST/string'].attrs['__IS_UTC_DATETIME64'])
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+            
+            # Delete __IS_UTF8 Attribute from one column and ensure
+            # that TableFormatError is raised.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            del(accessor.root['TEST/string'].attrs['__IS_UTF8'])
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+            
+            # Set __IS_UTC_DATETIME64 and __IS_UTF8 Attributes both to True and
+            # ensure that TableFormatError is raised.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            accessor.root['TEST/string'].attrs['__IS_UTF8'] = True
+            accessor.root['TEST/string'].attrs['__IS_UTC_DATETIME64'] = True
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+            
+            # Set __IS_UTC_DATETIME64 to True for a column with the wrong dtype
+            # ensure that TableFormatError is raised.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            accessor.root[f'TEST/{np.int16}'].attrs['__IS_UTC_DATETIME64'] = True
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+            
+            # Set __IS_UTF8 to True for a column with the wrong dtype
+            # ensure that TableFormatError is raised.
+            dataf = random_table(1024)
+            accessor.add(dataf, 'TEST')
+            accessor.root[f'TEST/{np.int16}'].attrs['__IS_UTF8'] = True
+            with self.assertRaises(hdf5eis.exceptions.TableFormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
+            
+            
+            # Create a DataSet with __TYPE == UTF-8 but an invalid dtype and
+            # ensure a UTF8FormatError is raised.
+            accessor.root.create_dataset(
+                'TEST', data=np.random.rand(32)
+            )
+            accessor.root['TEST'].attrs['__TYPE'] = 'UTF-8'
+            with self.assertRaises(hdf5eis.exceptions.UTF8FormatError):
+                accessor.validate()
+            del(accessor.root['TEST'])
 
 
 class TestTimeseriesAccessorClassMethods(unittest.TestCase):
