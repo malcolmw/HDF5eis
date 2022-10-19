@@ -866,7 +866,8 @@ class TimeseriesAccessor(AccessorBase):
                     _sample_idx(
                         min(end_time, row['end_time']),
                         row['start_time'],
-                        row['sampling_rate']
+                        row['sampling_rate'],
+                        right=True
                     )
                     + 1
                 )
@@ -1017,6 +1018,12 @@ def determine_segment_sample_range(rows, start_time, end_time):
         The time of the first available sample in the specified time
         range.
 
+
+    |-----|-----|-----|-----|-----|-----|
+             A                 B
+    |-----X-----X-----X-----X-----X-----|
+    
+    Samples X are returned for start_time=A, end_time=B.
     '''
     sampling_rate = rows.iloc[0]['sampling_rate']
     data_start_time = rows.iloc[0]['start_time']
@@ -1024,7 +1031,10 @@ def determine_segment_sample_range(rows, start_time, end_time):
     istart = _sample_idx(start_time, data_start_time, sampling_rate)
     iend = (
         _sample_idx(
-            min(end_time, data_end_time), data_start_time, sampling_rate
+            min(end_time, data_end_time),
+            data_start_time,
+            sampling_rate,
+            right=True
         )
         + 1
     )
