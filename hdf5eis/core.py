@@ -18,12 +18,13 @@ from . import gather as gm
 
 
 STRING_DTYPE = h5py.string_dtype(encoding='utf-8')
+TS_INDEX_COLUMNS = ['tag', 'start_time', 'end_time', 'sampling_rate', 'npts']
 TS_INDEX_DTYPES = {
     'tag': STRING_DTYPE,
-    "start_time": pd.api.types.DatetimeTZDtype(tz="UTC"),
-    "end_time": pd.api.types.DatetimeTZDtype(tz="UTC"),
-    "sampling_rate": np.float32,
-    "npts": np.int64,
+    'start_time': pd.api.types.DatetimeTZDtype(tz='UTC'),
+    'end_time': pd.api.types.DatetimeTZDtype(tz='UTC'),
+    'sampling_rate': np.float32,
+    'npts': np.int64,
 }
 COMPATIBLE_VERSIONS = ['0.1.0']
 
@@ -237,7 +238,7 @@ class AccessorBase:
 
     @property
     def parent(self):
-        """
+        '''
         The parent of the group to which this accessor provides access.
 
         Returns
@@ -246,24 +247,24 @@ class AccessorBase:
             The parent of the group to which this accessor provides
             access.
 
-        """
+        '''
         return self._parent
 
     @property
     def root(self):
-        """
+        '''
         The group to which this accessor provides access.
 
         Returns
         -------
         h5py.Group
             The group to which this accessor provides access.
-        """
+        '''
         return self._root
 
 
     def add_table(self, dataf, key):
-        """
+        '''
         Add DataFrame `dataf` to root group under `key`.
 
         Parameters
@@ -339,7 +340,7 @@ class AccessorBase:
 
 
     def write_table(self, dataf, key):
-        """
+        '''
         Write data table to the parent group under key.
 
         Parameters
@@ -353,18 +354,18 @@ class AccessorBase:
         -------
         None.
 
-        """
+        '''
         for column in dataf.columns:
             self.write_column(dataf[column], key)
 
-        if "__INDEX" in self.root[key]:
-            del self.root[f"{key}/__INDEX"]
+        if '__INDEX' in self.root[key]:
+            del self.root[f'{key}/__INDEX']
 
-        self.root[key].create_dataset("__INDEX", data=dataf.index.values)
+        self.root[key].create_dataset('__INDEX', data=dataf.index.values)
 
 
     def write_column(self, column, key):
-        """
+        '''
         Write a single column of data to the self.root Group of
         self.parent.
 
@@ -379,7 +380,7 @@ class AccessorBase:
         -------
         None.
 
-        """
+        '''
         is_utc_datetime64 = pd.api.types.is_datetime64_any_dtype(column)
         if (
             (
@@ -396,74 +397,51 @@ class AccessorBase:
 
         if is_utc_datetime64:
             if column.dt.tz is None:
-                warnings.warn(f"Time zone of '{column}' is not set. Assuming UTC.")
-                column = column.dt.tz_localize("UTC")
-            column = column.dt.tz_convert("UTC")
+                warnings.warn(f'Time zone of \'{column}\' is not set. Assuming UTC.')
+                column = column.dt.tz_localize('UTC')
+            column = column.dt.tz_convert('UTC')
             column = column.astype(np.int64)
 
-        if f"{key}/{column.name}" in self.root:
-            del self.root[f"{key}/{column.name}"]
+        if f'{key}/{column.name}' in self.root:
+            del self.root[f'{key}/{column.name}']
 
         values = column.values
         datas = self.root[key].create_dataset(
             column.name, 
             data=values.astype(STRING_DTYPE) if is_utf8 else values
-
+        )
         datas.attrs['__IS_UTC_DATETIME64'] = is_utc_datetime64
         datas.attrs['__IS_UTF8'] = is_utf8
-        Read data table stored in root group under key.
-
-        Parameters
-        ----------
-        key : str
-            Key of data table in root group to read.
-
-        Returns
-        -------
-        dataf : pandas.DataFrame
-            The table data stored under key in root group.
-
-        """
-        group = self.root[key]
-        dataf = pd.DataFrame(index=group["__INDEX"][:])
-        for column in filter(lambda key: key != "__INDEX", group.keys()):
-            dataf[column] = group[column][:]
-            if group[column].attrs["__IS_UTC_DATETIME64"] is np.bool_(True):
-                dataf[column] = pd.to_datetime(dataf[column], utc=True)
-            elif group[column].attrs["__IS_UTF8"] is np.bool_(True):
-                dataf[column] = dataf[column].str.decode("UTF-8")
-
-        return dataf
 
 
 class HDF5eisFileFormatError(Exception):
-    """
+    '''
     An Exception indicating that the current file is improperly
     formatted.
 
-    """
+    '''
 
 
 class AuxiliaryAccessor(AccessorBase):
-    """
+    '''
     Accessor class for auxiliary (i.e., /metadata and /products groups)
     data.
-    """
+    '''
     def __getitem__(self, key):
-        """
+        '''
         Read the item under `key` from this group.
-        """
+        '''
 
         dtype = self.root[key].attrs['__TYPE']
 
-        if dtype == "TABLE":
+        if dtype == 'TABLE':
             return self.read_table(key)
-        if dtype == "UTF-8":
+        if dtype == 'UTF-8':
             return self.root[key][0].decode()
-        raise HDF5eisFileFormatError(f"Unknown data type {dtype} for key {key}.")
+        raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
     def add(self, obj, key):
-        """
+        '''
         Add a table or UTF-8 encoded byte stream to the root group.
 
         Parameters
@@ -478,14 +456,14 @@ class AuxiliaryAccessor(AccessorBase):
         -------
         None.
 
-        """
+        '''
         if isinstance(obj, pd.DataFrame):
             self.add_table(obj, key)
         elif isinstance(obj, (str, bytes)):
             self.add_utf8(obj, key)
 
     def add_utf8(self, data, key):
-        """
+        '''
         Add UTF-8 encoded data to root group under key.
 
         Parameters
@@ -499,14 +477,14 @@ class AuxiliaryAccessor(AccessorBase):
         -------
         None.
 
-        """
+        '''
         self.root.create_dataset(
             key, data=[data], dtype=STRING_DTYPE
         )
         self.root[key].attrs['__TYPE'] = 'UTF-8'
 
     def link(self, src_file, src_path, key):
-        """
+        '''
         Create and external link a data table or UTF-8 encoded byte
         stream in the root group under key.
 
@@ -525,7 +503,7 @@ class AuxiliaryAccessor(AccessorBase):
         -------
         None.
 
-        """
+        '''
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
     
@@ -562,13 +540,13 @@ class AuxiliaryAccessor(AccessorBase):
             
 
 class TimeseriesAccessor(AccessorBase):
-    """
+    '''
     Accessor class for timeseries data.
 
-    """
+    '''
     @property
     def index(self):
-        """
+        '''
         Tabular index of contents in /timeseries group.
 
         Returns
@@ -576,10 +554,10 @@ class TimeseriesAccessor(AccessorBase):
         pandas.DataFrame
             Index of contents in /timeseries group.
 
-        """
-        if not hasattr(self, "_index"):
-            if "__TS_INDEX" in self.root:
-                self._index = self.read_table("__TS_INDEX")
+        '''
+        if not hasattr(self, '_index'):
+            if '__TS_INDEX' in self.root:
+                self._index = self.read_table('__TS_INDEX')
             else:
                 self._index = pd.DataFrame(columns=TS_INDEX_COLUMNS)
                 self._index = self._index.astype(TS_INDEX_DTYPES)
@@ -589,8 +567,8 @@ class TimeseriesAccessor(AccessorBase):
     def index(self, value):
         self._index = value
 
-    def add(self, data, start_time, sampling_rate, tag="", **kwargs):
-        """
+    def add(self, data, start_time, sampling_rate, tag='', **kwargs):
+        '''
         Add timeseries data to the parent HDF5eis file.
 
         Parameters
@@ -605,7 +583,7 @@ class TimeseriesAccessor(AccessorBase):
             The temporal sampling rate of data in units of samples per
             second.
         tag : str, optional
-            Tag to associate with data. The default is "".
+            Tag to associate with data. The default is ''.
         **kwargs :
             Additional keyword arguments are passed directly the
             h5py.Group.create_datset() method and can be used, for
@@ -615,9 +593,9 @@ class TimeseriesAccessor(AccessorBase):
         -------
         None.
 
-        """
-        if "dtype" not in kwargs:
-            kwargs["dtype"] = data.dtype
+        '''
+        if 'dtype' not in kwargs:
+            kwargs['dtype'] = data.dtype
 
         datas = self.create_dataset(
             data.shape,
@@ -631,9 +609,9 @@ class TimeseriesAccessor(AccessorBase):
 
 
     def create_dataset(
-            self, shape, start_time, sampling_rate, tag="", **kwargs
+            self, shape, start_time, sampling_rate, tag='', **kwargs
     ):
-        """
+        '''
         Create and return an empty data set.
 
         Parameters
@@ -648,7 +626,7 @@ class TimeseriesAccessor(AccessorBase):
             The temporal sampling rate of data in units of samples per
             second.
         tag : str, optional
-            Tag to associate with data. The default is "".
+            Tag to associate with data. The default is ''.
         **kwargs : TYPE
             Additional keyword arguments are passed directly the
             h5py.Group.create_datset() method and can be used, for
@@ -659,14 +637,14 @@ class TimeseriesAccessor(AccessorBase):
         TYPE
             DESCRIPTION.
 
-        """
-        sampling_interval = pd.to_timedelta(1 / sampling_rate, unit="S")
+        '''
+        sampling_interval = pd.to_timedelta(1 / sampling_rate, unit='S')
         nsamples = shape[-1]
         start_time = pd.to_datetime(start_time)
         end_time = start_time + sampling_interval * (nsamples - 1)
         handle = build_handle(tag, start_time, end_time)
         datas = self.root.create_dataset(handle, shape=shape, **kwargs)
-        datas.attrs["sampling_rate"] = sampling_rate
+        datas.attrs['sampling_rate'] = sampling_rate
 
         row = pd.DataFrame(
             [[tag, start_time, end_time, sampling_rate, shape[-1]]],
@@ -678,18 +656,18 @@ class TimeseriesAccessor(AccessorBase):
         return self.root[handle]
 
     def flush_index(self):
-        """
+        '''
         Flush the self.index attribute to disk.
 
         Returns
         -------
         None.
 
-        """
-        if "__TS_INDEX" not in self.root:
-            self.add_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
+        '''
+        if '__TS_INDEX' not in self.root:
+            self.add_table(self.index.astype(TS_INDEX_DTYPES), '__TS_INDEX')
         else:
-            self.write_table(self.index.astype(TS_INDEX_DTYPES), "__TS_INDEX")
+            self.write_table(self.index.astype(TS_INDEX_DTYPES), '__TS_INDEX')
 
     def link_tag(
         self,
@@ -699,7 +677,7 @@ class TimeseriesAccessor(AccessorBase):
         suffix=None,
         new_tag=None
     ):
-        """
+        '''
         Links timeseries data from an external file to the current file.
 
         Parameters
@@ -719,40 +697,40 @@ class TimeseriesAccessor(AccessorBase):
         -------
         None.
 
-        """
+        '''
         assert prefix is None or isinstance(prefix, str)
         assert suffix is None or isinstance(suffix, str)
         assert new_tag is None or isinstance(new_tag, str)
 
         if new_tag is None:
-            new_tag = "" if prefix is None else prefix
-            new_tag = "/".join((new_tag, src_tag))
-            new_tag = new_tag if suffix is None else "/".join((new_tag, suffix))
-            new_tag = new_tag.lstrip("/")
+            new_tag = '' if prefix is None else prefix
+            new_tag = '/'.join((new_tag, src_tag))
+            new_tag = new_tag if suffix is None else '/'.join((new_tag, suffix))
+            new_tag = new_tag.lstrip('/')
 
         new_index = list()
 
-        with h5py.File(src_file, mode="r") as file:
-            accessor = TimeseriesAccessor(file, "/timeseries")
+        with h5py.File(src_file, mode='r') as file:
+            accessor = TimeseriesAccessor(file, '/timeseries')
             index = accessor.index
-            index = index[index["tag"].str.match(src_tag)]
+            index = index[index['tag'].str.match(src_tag)]
 
             for _, row in index.iterrows():
-                src_handle = "/".join((
-                    "/timeseries",
+                src_handle = '/'.join((
+                    '/timeseries',
                     build_handle(
-                        row["tag"],
-                        row["start_time"],
-                        row["end_time"]
+                        row['tag'],
+                        row['start_time'],
+                        row['end_time']
                     ),
                 ))
-                new_handle = "/".join(
-                    (new_tag, src_handle.rsplit("/", maxsplit=1)[-1])
+                new_handle = '/'.join(
+                    (new_tag, src_handle.rsplit('/', maxsplit=1)[-1])
                 )
                 self.root[new_handle] = h5py.ExternalLink(src_file, src_handle)
-                row["tag"] = "/".join(
-                    (new_tag, row["tag"].lstrip(src_tag))
-                ).strip("/")
+                row['tag'] = '/'.join(
+                    (new_tag, row['tag'].lstrip(src_tag))
+                ).strip('/')
                 new_index.append(row)
 
         self.index = pd.concat(
@@ -762,14 +740,14 @@ class TimeseriesAccessor(AccessorBase):
         self.flush_index()
 
     def __getitem__(self, key):
-        """
+        '''
         Return a list of hdf5eis.gather.Gather objects.
 
         The first element of `key` must be a `str` tag. The last
         element must be a time slice.
 
         Assumes data are regularly sampled between requested start and end times.
-        """
+        '''
 
         assert isinstance(key[0], str)
         assert key[-1].start is not None and key[-1].stop is not None
@@ -784,11 +762,11 @@ class TimeseriesAccessor(AccessorBase):
         # Read data for each tag.
         gathers = dict()
 
-        for tag in index["tag"].unique():
+        for tag in index['tag'].unique():
             gathers[tag] = list()
 
             gathers[tag] = self.read_data(
-                index[index["tag"] == tag],
+                index[index['tag'] == tag],
                 start_time,
                 end_time,
                 key
@@ -798,7 +776,7 @@ class TimeseriesAccessor(AccessorBase):
 
 
     def read_data(self, index, start_time, end_time, key):
-        """
+        '''
         Read data between start and end time with respect to the given
         index and key.
 
@@ -823,7 +801,7 @@ class TimeseriesAccessor(AccessorBase):
         gathers : list
             A list of hdf5eis.Gather objects containing requested data.
 
-        """
+        '''
         gathers = list()
 
         for segment_id in index.index.unique():
@@ -840,7 +818,7 @@ class TimeseriesAccessor(AccessorBase):
         return gathers
 
     def read_segment(self, rows, start_time, end_time, key):
-        """
+        '''
         Read the continuous segment of data corresponding to the given
         set of index rows and between given start and end times.
 
@@ -865,39 +843,39 @@ class TimeseriesAccessor(AccessorBase):
             An hdf5eis.Gather object containing the requested continuous
             segment of data.
 
-        """
+        '''
         # Make sure the sampling rate doesn't change mid stream.
-        assert len(rows["sampling_rate"].unique()) == 1
+        assert len(rows['sampling_rate'].unique()) == 1
 
         nsamples, first_sample = determine_segment_sample_range(
             rows,
             start_time,
             end_time
         )
-        sampling_rate = rows.iloc[0]["sampling_rate"]
+        sampling_rate = rows.iloc[0]['sampling_rate']
 
         data, jstart = None, 0
         for _, row in rows.iterrows():
             sample_range = (
                 _sample_idx(
                     start_time,
-                    row["start_time"],
-                    row["sampling_rate"]
+                    row['start_time'],
+                    row['sampling_rate']
                 ),
                 (
                     _sample_idx(
-                        min(end_time, row["end_time"]),
-                        row["start_time"],
-                        row["sampling_rate"]
+                        min(end_time, row['end_time']),
+                        row['start_time'],
+                        row['sampling_rate']
                     )
                     + 1
                 )
             )
             handle_key = (
                 build_handle(
-                    row["tag"],
-                    row["start_time"],
-                    row["end_time"]
+                    row['tag'],
+                    row['start_time'],
+                    row['end_time']
                 ),
                 (*key[1:-1], slice(*sample_range))
             )
@@ -931,7 +909,7 @@ class TimeseriesAccessor(AccessorBase):
 
 
     def reduce_index(self, tag, start_time, end_time):
-        """
+        '''
         Reduce the index to the set of rows referring to data between
         the given start and endtimes and matching the given tag.
 
@@ -950,33 +928,36 @@ class TimeseriesAccessor(AccessorBase):
             The set of rows from self.index matching the given tag and
             time range.
 
-        """
+        '''
         index = self.index
         if index is None:
-            warnings.warn("The timeseries index is empty.")
+            warnings.warn('The timeseries index is empty.')
             return None
 
         # Find matching tags.
-        index = index[index["tag"].str.fullmatch(tag)]
+        index = index[index['tag'].str.fullmatch(tag)]
 
         # Find datasets within requested time range.
         index = index[
-             (index["start_time"] < end_time)
-            &(index["end_time"] > start_time)
+             (index['start_time'] < end_time)
+            &(index['end_time'] > start_time)
         ]
 
         if len(index) == 0:
-            warnings.warn("No data found for specified tag and time range.")
+            warnings.warn('No data found for specified tag and time range.')
             return None
 
         # Sort values by time.
-        index = index.sort_values("start_time")
+        index = index.sort_values('start_time')
 
-        sampling_interval = pd.to_timedelta(1 / index["sampling_rate"], unit="S")
-        delta = index["start_time"] - index.shift(1)["end_time"]
+        sampling_interval = pd.to_timedelta(
+            1 / index['sampling_rate'], 
+            unit='S'
+        )
+        delta = index['start_time'] - index.shift(1)['end_time']
 
-        index["segment_id"] = (delta != sampling_interval).cumsum()
-        index = index.set_index("segment_id")
+        index['segment_id'] = (delta != sampling_interval).cumsum()
+        index = index.set_index('segment_id')
 
         return index
     
@@ -1012,7 +993,7 @@ class TimeseriesAccessor(AccessorBase):
 
 
 def determine_segment_sample_range(rows, start_time, end_time):
-    """
+    '''
     Determine the number of samples and time of the first sample
     for data available in given rows between given start and times.
 
@@ -1036,10 +1017,10 @@ def determine_segment_sample_range(rows, start_time, end_time):
         The time of the first available sample in the specified time
         range.
 
-    """
-    sampling_rate = rows.iloc[0]["sampling_rate"]
-    data_start_time = rows.iloc[0]["start_time"]
-    data_end_time = rows.iloc[-1]["end_time"]
+    '''
+    sampling_rate = rows.iloc[0]['sampling_rate']
+    data_start_time = rows.iloc[0]['start_time']
+    data_end_time = rows.iloc[-1]['end_time']
     istart = _sample_idx(start_time, data_start_time, sampling_rate)
     iend = (
         _sample_idx(
@@ -1048,14 +1029,14 @@ def determine_segment_sample_range(rows, start_time, end_time):
         + 1
     )
     nsamples = iend - istart
-    offset = pd.to_timedelta(istart / sampling_rate, unit="S")
+    offset = pd.to_timedelta(istart / sampling_rate, unit='S')
     first_sample = data_start_time + offset
 
     return (nsamples, first_sample)
 
 
 def get_shape(shape, key):
-    """
+    '''
     Determine the shape of a sliced array.
 
     Parameters
@@ -1070,7 +1051,7 @@ def get_shape(shape, key):
     tuple
         The shape of the sliced array.
 
-    """
+    '''
     new_shape = tuple()
     imax = len(shape) if Ellipsis not in key else key.index(Ellipsis)
     new_shape = tuple((get_slice_length(key[i], shape[i]) for i in range(imax)))
@@ -1084,7 +1065,7 @@ def get_shape(shape, key):
 
 
 def get_slice_length(obj, max_len):
-    """
+    '''
     Determine the length of a slice along a single axis.
 
     Parameters
@@ -1105,7 +1086,7 @@ def get_slice_length(obj, max_len):
     int
         The length of the slice.
 
-    """
+    '''
     if obj == slice(None):
         return max_len
     if isinstance(obj, slice):
@@ -1118,7 +1099,7 @@ def get_slice_length(obj, max_len):
 
 
 def build_handle(tag, start_time, end_time):
-    """
+    '''
     Build a properly formatted address to the data referred to by
     tag, start_time, and end_time.
 
@@ -1130,7 +1111,7 @@ def build_handle(tag, start_time, end_time):
         The time of the first sample in the array for which the handle
         is being built.
     end_time : pandas.Timestamp
-        The time of the last sample in the array for which the handle 
+        The time of the last sample in the array for which the handle
         is being built.
 
     Returns
@@ -1138,18 +1119,18 @@ def build_handle(tag, start_time, end_time):
     handle : str
         The address of the data relative to the accessor root.
 
-    """
+    '''
     tstart = strftime(start_time)
     tend = strftime(end_time)
-    handle = "/".join((tag, f"__{tstart}__{tend}"))
-    handle = re.sub("//+", "/", handle)
-    handle = handle.lstrip("/")
+    handle = '/'.join((tag, f'__{tstart}__{tend}'))
+    handle = re.sub('//+', '/', handle)
+    handle = handle.lstrip('/')
 
     return handle
 
 
 def _sample_idx(time, start_time, sampling_rate, right=False):
-    """
+    '''
     Get the index of a sample at a given time, relative to start_time.
 
     Parameters
@@ -1171,7 +1152,7 @@ def _sample_idx(time, start_time, sampling_rate, right=False):
     int
         The index of the sample corresponding to the provided time.
 
-    """
+    '''
     time = pd.to_datetime(time, utc=True)
     delta = (time - start_time).total_seconds()
 
@@ -1185,13 +1166,13 @@ def _sample_idx(time, start_time, sampling_rate, right=False):
 
 
 def _get_time_fields(dataf):
-    """
+    '''
     Return list of column names with datetime-like dtype.
 
     Parameters
     ----------
     dataf : pandas.DataFrame
-        DataFrame from which to extract names of columns with 
+        DataFrame from which to extract names of columns with
         datetime-like dtype.
 
     Returns
@@ -1199,7 +1180,7 @@ def _get_time_fields(dataf):
     list
         List of column names with datetime-like dtype.
 
-    """
+    '''
     is_datetime = pd.api.types.is_datetime64_any_dtype
     return list(filter(lambda key: is_datetime(dataf[key]), dataf.columns))
 
@@ -1291,7 +1272,7 @@ def _validate_table(group):
 
 
 def strftime(time):
-    """
+    '''
     Return a formatted string representation of `time`.
 
     Parameters
