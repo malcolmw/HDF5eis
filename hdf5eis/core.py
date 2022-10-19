@@ -88,6 +88,9 @@ class File(h5py.File):
         self._products = AuxiliaryAccessor(self, '/products')
         self._timeseries = TimeseriesAccessor(self, '/timeseries')
 
+        if validate is True:
+            self.validate()
+
     @property
     def metadata(self):
         '''
@@ -140,6 +143,46 @@ class File(h5py.File):
         None.
         '''
         return self.attrs['__VERSION']
+
+    def validate(self):
+        '''
+        Validate file structure and raise error
+        '''
+        self._validate_version()
+        self._validate_keys()
+        self._validate_accessors()
+
+    def _validate_keys(self):
+        '''
+        Check that the file only contains /metadata, /products, and
+        /timeseries keys.
+
+        Raises
+        ------
+        KeyError
+            Raises KeyError if an Group other than /metadata, /products,
+            or /timeseries is found in file.
+        
+        Returns
+        -------
+        None.
+
+        '''
+        for key in self:
+            if key not in ('metadata', 'products', 'timeseries'):
+                raise KeyError(f'Invalid Group(={key}) found in file.')
+                
+    def _validate_accessors(self):
+        '''
+        Validate /metadata and /products Groups.
+
+        Returns
+        -------
+        None.
+
+        '''
+        for accessor in (self.metadata, self.products, self.timeseries):
+            accessor.validate()
 
     def _validate_version(self):
         '''
@@ -239,6 +282,60 @@ class AccessorBase:
         group.attrs["type"] = "TABLE"
 
         self.write_table(dataf, key)
+
+
+    def list_tables(self):
+        '''
+        Return a list of all tables below root.
+
+        Returns
+        -------
+        names : list
+            A list of names of tables beneath root.
+
+        '''
+        names = list()
+        def is_table(name, obj):
+            if '__TYPE' in obj.attrs and obj.attrs['__TYPE'] == 'TABLE':
+                names.append(name)
+        self.root.visititems(is_table)
+        return names
+
+
+    def read_table(self, key):
+        '''
+        Read data table stored in root group under key.
+
+        Parameters
+        ----------
+        key : str
+            Key of data table in root group to read.
+
+        Returns
+        -------
+        dataf : pandas.DataFrame
+            The table data stored under key in root group.
+
+        '''
+        group = self.root[key]
+        dataf = pd.DataFrame(index=group['__INDEX'][:])
+        for column in filter(lambda key: key != '__INDEX', group.keys()):
+            dataf[column] = group[column][:]
+            if group[column].attrs['__IS_UTC_DATETIME64'] is np.bool_(True):
+                dataf[column] = pd.to_datetime(dataf[column], utc=True)
+            elif group[column].attrs['__IS_UTF8'] is np.bool_(True):
+                dataf[column] = dataf[column].str.decode('UTF-8')
+
+        return dataf
+    
+    
+    def validate(self):
+        self.validate_tables()
+        
+    
+    def validate_tables(self):
+        for name in self.list_tables():
+            _validate_table(self.root[name])
 
 
     def write_table(self, dataf, key):
@@ -431,6 +528,38 @@ class AuxiliaryAccessor(AccessorBase):
         """
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
+    
+    def list_utf8(self):
+        '''
+        Return a list of all UTF-8 encoded strings below root.
+
+        Returns
+        -------
+        names : list
+            A list of names of UTF-8 encoded strings beneath root.
+
+        '''
+        names = list()
+        def is_utf8(name, obj):
+            if '__TYPE' in obj.attrs and obj.attrs['__TYPE'] == 'UTF-8':
+                names.append(name)
+        self.root.visititems(is_utf8)
+        return names
+    
+    def validate(self):
+        self.validate_tables()
+        self.validate_utf8()
+    
+    def validate_utf8(self):
+        for name in self.list_utf8():
+            dtype = self.root[name].dtype
+            if dtype != STRING_DTYPE:
+                raise(exceptions.UTF8FormatError(
+                    f'UTF-8 encoded string has the wrong dtype(={dtype}).'
+                ))
+
+
+            
 
 class TimeseriesAccessor(AccessorBase):
     """
@@ -850,6 +979,36 @@ class TimeseriesAccessor(AccessorBase):
         index = index.set_index("segment_id")
 
         return index
+    
+    def validate(self):
+        self.validate_tables()
+        self._validate_ts_index()
+
+    def _validate_ts_index(self):
+        '''
+        Validate the __TS_INDEX table.
+
+        Raises
+        ------
+        exceptions.TSIndexError
+            Raises TSIndexError if their is a mismatch between 
+            the __TS_INDEX table and timeseries data.
+
+        Returns
+        -------
+        None.
+
+        '''
+        for _, row in self.index.iterrows():
+            handle = build_handle(row['tag'], row['start_time'], row['end_time'])
+            if handle not in self.root:
+                raise exceptions.TSIndexError(
+                    f'Expected DataSet at {handle} not found.'
+                )
+            elif self.root[handle].shape[-1] != row['npts']:
+                raise exceptions.TSIndexError(
+                    f'Unexpected number of samples in DataSet at {handle}.'
+                )
 
 
 def determine_segment_sample_range(rows, start_time, end_time):
@@ -1043,6 +1202,92 @@ def _get_time_fields(dataf):
     """
     is_datetime = pd.api.types.is_datetime64_any_dtype
     return list(filter(lambda key: is_datetime(dataf[key]), dataf.columns))
+
+
+def _validate_table(group):
+    '''
+    Validate table structure.
+
+    Parameters
+    ----------
+    group : h5py.Group
+        The parent h5py.Group of the table to validate.
+
+    Raises
+    ------
+    exceptions.TableFormatError
+        Raises TableFormatError if any format errors are detected.
+
+    Returns
+    -------
+    None.
+
+    '''
+    # Validate column shapes.
+    lengths = list()
+    columns = list(group.keys())
+    for column in columns:
+        shape = group[column].shape
+        if len(shape) != 1:
+            raise exceptions.TableFormatError(
+                f'Columns must have shape=(N,) but shape={shape} found for '
+                f'\'{column}\' column in \'{group.name}\' table.'
+            )
+        lengths.append(shape[-1])
+    if len(np.unique(lengths)) != 1:
+        msg = f'Columns in \'{group.name}\' table are not all the same length.'
+        msg += '\n\nColumn: Length\n--------------'
+        for i in range(len(columns)):
+            msg += f'\n{columns[i]}: {lengths[i]}'
+        raise exceptions.TableFormatError(msg)
+        
+    # Check for existence and compatibility of __IS_UTC_DATETIME64 and
+    # __IS_UTF8 tags.
+    for column in columns:
+        # Don't check the __INDEX column because it has different requirements.
+        if column == '__INDEX':
+            continue
+        if '__IS_UTC_DATETIME64' not in group[column].attrs:
+            raise(exceptions.TableFormatError(
+                f'__IS_UTC_DATETIME64 Attribute missing for \'{column}\' '
+                f'column of \'{group.name}\' table.'
+            ))
+        if '__IS_UTF8' not in group[column].attrs:
+            raise(exceptions.TableFormatError(
+                f'__IS_UTF8 Attribute missing for \'{column}\' '
+                f'column of \'{group.name}\' table.'
+            ))
+        if (
+            group[column].attrs['__IS_UTC_DATETIME64']
+            and
+            group[column].attrs['__IS_UTF8']
+        ):
+            raise(exceptions.TableFormatError(
+                f'__IS_UTC_DATETIME64 and __IS_UTF8 Attributes are both True '
+                f'for \'{column}\' column of \'{group.name}\' table.'
+            ))
+    
+    # Verify that __IS_UTC_DATETIME64 columns are 64-bit integers.
+    for column in columns:
+        # Don't check the __INDEX column because it has different requirements.
+        if column == '__INDEX':
+            continue
+        if group[column].attrs['__IS_UTC_DATETIME64']:
+            dtype = group[column].dtype
+            if dtype != np.int64:
+                raise(exceptions.TableFormatError(
+                    f'__IS_UTC_DATETIME64 is True for \'{column}\' column '
+                    f'of \'{group.name}\' table, but dtype(={dtype}) is not '
+                    f'a 64-bit integer.'
+                ))
+        elif group[column].attrs['__IS_UTF8']:
+            dtype = group[column].dtype
+            if not dtype == STRING_DTYPE:
+                raise(exceptions.TableFormatError(
+                    f'__IS_UTF8 is True for \'{column}\' column of '
+                    f'\'{group.name}\' table, but dtype(={dtype}) does not '
+                    f'appear to be a byte string.'
+                ))
 
 
 def strftime(time):
