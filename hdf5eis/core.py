@@ -1,6 +1,6 @@
-"""
+'''
 Core functionality for HDF5eis provided by the hdf5eis.File class.
-"""
+'''
 # Standard library imports
 import pathlib
 import re
@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 
 # Local imports
+from ._version import __version__
+from . import exceptions
 from . import gather as gm
 
 
@@ -23,18 +25,19 @@ TS_INDEX_DTYPES = {
     "sampling_rate": np.float32,
     "npts": np.int64,
 }
+COMPATIBLE_VERSIONS = ['0.1.0']
 
 
 class File(h5py.File):
-    """
+    '''
     An h5py.File subclass for convenient I/O of big, multidimensional
     timeseries data from environmental sensors. This class provides
-    the core functionality for manipulating HDF5eis files.
+    the core functionality for building and processing HDF5eis files.
 
-    """
+    '''
 
-    def __init__(self, *args, overwrite=False, **kwargs):
-        """
+    def __init__(self, *args, overwrite=False, validate=True, **kwargs):
+        '''
         Initialize hdf5eis.File object.
 
         Parameters
@@ -46,90 +49,131 @@ class File(h5py.File):
         overwrite : bool, optional
             Whether or not to overwrite an existing file if one exists
             at the given location. The default is False.
+        validate : bool, optional
+            Whether or not to validate the file structure. This may be
+            slow for very large files and can be turned off. The default
+            is True.
         **kwargs :
             These are passed directly to super class initializer.
 
         Raises
         ------
 
-            ValueError if mode="w" and file already exists.
+            ValueError if mode='w' and file already exists.
 
         Returns
         -------
             None.
 
-        """
+        '''
 
-        if "mode" not in kwargs:
-            kwargs["mode"] = "r"
+        if 'mode' not in kwargs:
+            kwargs['mode'] = 'r'
 
         if (
-            kwargs["mode"] == "w"
+            kwargs['mode'] == 'w'
             and overwrite is False
             and pathlib.Path(args[0]).exists()
         ):
             raise (
                 ValueError(
-                    "File already exists! If you are sure you want to open it"
-                    " in write mode, use `overwrite=True`."
+                    'File already exists! If you are sure you want to open it'
+                    ' in write mode, use `overwrite=True`.'
                 )
             )
 
         super().__init__(*args, **kwargs)
 
-        self._metadata = AuxiliaryAccessor(self, "/metadata")
-        self._products = AuxiliaryAccessor(self, "/products")
-        self._timeseries = TimeseriesAccessor(self, "/timeseries")
+        self._metadata = AuxiliaryAccessor(self, '/metadata')
+        self._products = AuxiliaryAccessor(self, '/products')
+        self._timeseries = TimeseriesAccessor(self, '/timeseries')
 
     @property
     def metadata(self):
-        """
-        Provides functionality to manipulate the  "/metadata"
+        '''
+        Provides functionality to manipulate the  '/metadata'
         group.
 
         Returns
         -------
         hdf5eis.AuxiliaryAccessor
-            Provides functionality to manipulate the  "/metadata"
+            Provides functionality to manipulate the  '/metadata'
             group.
-        """
+        '''
         return self._metadata
 
     @property
     def products(self):
-        """
-        Provides functionality to manipulate the  "/products"
+        '''
+        Provides functionality to manipulate the  '/products'
         group.
 
         Returns
         -------
         hdf5eis.AuxiliaryAccessor
-            Provides functionality to manipulate the  "/products"
+            Provides functionality to manipulate the  '/products'
             group.
-        """
+        '''
         return self._products
 
     @property
     def timeseries(self):
-        """
-        Provides functionality to manipulate the  "/timeseries"
+        '''
+        Provides functionality to manipulate the  '/timeseries'
         group.
 
         Returns
         -------
         hdf5eis.TimeseriesAccessor
-            Provides functionality to manipulate the  "/timeseries"
+            Provides functionality to manipulate the  '/timeseries'
             group.
-        """
+        '''
         return self._timeseries
+
+    @property
+    def version(self):
+        '''
+        Return the schema version of this file.
+
+        Returns
+        -------
+        None.
+        '''
+        return self.attrs['__VERSION']
+
+    def _validate_version(self):
+        '''
+        Check that the version of this file is compatible against
+        the current code base.
+
+        Raises
+        ------
+        VersionError
+            Raises VersionError if the file version is incompatible
+            with the current code version.
+
+        Returns
+        -------
+        None.
+        '''
+        # If __VERSION is not set, try to set it.
+        if '__VERSION' not in self.attrs:
+            self.attrs['__VERSION'] = __version__
+        if self.attrs['__VERSION'] not in COMPATIBLE_VERSIONS:
+            version = self.attrs['__VERSION']
+            raise exceptions.VersionError(
+                f'File version(={version}) is not compatible with code '
+                f'version(={__version__}).\n'
+                f'Compatible versions: {", ".join(COMPATIBLE_VERSIONS)}.'
+            )
 
 
 class AccessorBase:
-    """
+    '''
     Abstract base class of Accessor classes.
-    """
+    '''
     def __init__(self, parent, root):
-        """
+        '''
         Initializer.
 
         Parameters
@@ -144,7 +188,7 @@ class AccessorBase:
         -------
         None.
 
-        """
+        '''
         self._parent = parent
         self._root = self._parent.require_group(root)
 
