@@ -17,9 +17,9 @@ from . import exceptions
 from . import gather as gm
 
 
-TS_INDEX_COLUMNS = ["tag", "start_time", "end_time", "sampling_rate", "npts"]
+STRING_DTYPE = h5py.string_dtype(encoding='utf-8')
 TS_INDEX_DTYPES = {
-    "tag": np.dtype("S"),
+    'tag': STRING_DTYPE,
     "start_time": pd.api.types.DatetimeTZDtype(tz="UTC"),
     "end_time": pd.api.types.DatetimeTZDtype(tz="UTC"),
     "sampling_rate": np.float32,
@@ -284,14 +284,16 @@ class AccessorBase:
 
         """
         is_utc_datetime64 = pd.api.types.is_datetime64_any_dtype(column)
-        if hasattr(column.dtype, "char") and column.dtype.char == np.dtype("S"):
-            is_utf8 = True
-        elif column.dtype is np.dtype("O"):
-            is_utf8 = True
-            warnings.warn(
-                f"\"{column.name}\" column has dtype = np.dtype(\"O\"). "
-                f"Interpreting as UTF-8 encoded bytes."
+        if (
+            (
+                hasattr(column.dtype, 'char') 
+                and
+                column.dtype.char == np.dtype('S')
             )
+            or
+            column.dtype == np.dtype('O')
+        ):
+            is_utf8 = True
         else:
             is_utf8 = False
 
@@ -305,13 +307,13 @@ class AccessorBase:
         if f"{key}/{column.name}" in self.root:
             del self.root[f"{key}/{column.name}"]
 
-        datas = self.root[key].create_dataset(column.name, data=column.values)
-        datas.attrs["__IS_UTC_DATETIME64"] = is_utc_datetime64
-        datas.attrs["__IS_UTF8"] = is_utf8
+        values = column.values
+        datas = self.root[key].create_dataset(
+            column.name, 
+            data=values.astype(STRING_DTYPE) if is_utf8 else values
 
-
-    def read_table(self, key):
-        """
+        datas.attrs['__IS_UTC_DATETIME64'] = is_utc_datetime64
+        datas.attrs['__IS_UTF8'] = is_utf8
         Read data table stored in root group under key.
 
         Parameters
@@ -402,7 +404,7 @@ class AuxiliaryAccessor(AccessorBase):
 
         """
         self.root.create_dataset(
-            key, data=[data], dtype=h5py.string_dtype(encoding="utf-8")
+            key, data=[data], dtype=STRING_DTYPE
         )
         self.root[key].attrs["type"] = "UTF-8"
 
