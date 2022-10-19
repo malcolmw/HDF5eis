@@ -1,10 +1,20 @@
+import re
 import setuptools
+
+version_file = 'hdf5eis/_version.py'
+version_line = open(version_file, 'r').read()
+version_re = r'^__version__ = ["\']([^"\']*)["\']'
+mo = re.search(version_re, version_line, re.M)
+if mo:
+    version = mo.group(1)
+else:
+    raise RuntimeError(f'Unable to find version string in {version_file}.')
 
 def configure():
 # Initialize the setup kwargs
     kwargs = {
             "name": "hdf5eis",
-            "version": "0.1a0",
+            "version": version,
             "author": "Malcolm White",
             "author_email": "malcolmw@mit.edu",
             "maintainer": "Malcolm C. A. White",
