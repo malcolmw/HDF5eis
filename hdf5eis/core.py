@@ -567,7 +567,7 @@ class TimeseriesAccessor(AccessorBase):
         '''
         if not hasattr(self, '_index'):
             if '__TS_INDEX' in self.root:
-                self._index = self.read_table('__TS_INDEX')
+                self._index, fmt = self.read_table('__TS_INDEX')
             else:
                 self._index = pd.DataFrame(columns=TS_INDEX_COLUMNS)
                 self._index = self._index.astype(TS_INDEX_DTYPES)
@@ -730,7 +730,7 @@ class TimeseriesAccessor(AccessorBase):
 
         with h5py.File(src_file, mode='r') as file:
             accessor = TimeseriesAccessor(file, '/timeseries')
-            index, fmt = accessor.index
+            index = accessor.index
             index = index[index['tag'].str.match(src_tag)]
 
             for _, row in index.iterrows():
