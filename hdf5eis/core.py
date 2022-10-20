@@ -16,7 +16,8 @@ from ._version import __version__
 from . import exceptions
 from . import gather as gm
 
-NULL_UTF8_FORMAT = 'README'
+NULL_UTF8_FORMAT  = 'NULL'
+NULL_TABLE_FORMAT = 'NULL'
 STRING_DTYPE = h5py.string_dtype(encoding='utf-8')
 TS_INDEX_COLUMNS = ['tag', 'start_time', 'end_time', 'sampling_rate', 'npts']
 TS_INDEX_DTYPES = {
@@ -263,7 +264,7 @@ class AccessorBase:
         return self._root
 
 
-    def add_table(self, dataf, key):
+    def add_table(self, dataf, key, fmt=NULL_TABLE_FORMAT):
         '''
         Add DataFrame `dataf` to root group under `key`.
 
@@ -279,10 +280,8 @@ class AccessorBase:
         None.
 
         '''
-        group = self.root.create_group(key)
-        group.attrs['__TYPE'] = 'TABLE'
-
-        self.write_table(dataf, key)
+        self.root.create_group(key)
+        self.write_table(dataf, key, fmt=fmt)
 
 
     def list_tables(self):
@@ -326,8 +325,9 @@ class AccessorBase:
                 dataf[column] = pd.to_datetime(dataf[column], utc=True)
             elif group[column].attrs['__IS_UTF8'] is np.bool_(True):
                 dataf[column] = dataf[column].str.decode('UTF-8')
+        fmt = group.attrs['__FORMAT']
 
-        return dataf
+        return dataf, fmt
     
     
     def validate(self):
@@ -339,7 +339,7 @@ class AccessorBase:
             _validate_table(self.root[name])
 
 
-    def write_table(self, dataf, key):
+    def write_table(self, dataf, key, fmt=NULL_TABLE_FORMAT):
         '''
         Write data table to the parent group under key.
 
@@ -355,6 +355,9 @@ class AccessorBase:
         None.
 
         '''
+        group = self.root[key]
+        group.attrs['__TYPE'] = 'TABLE'
+        group.attrs['__FORMAT'] = NULL_TABLE_FORMAT
         for column in dataf.columns:
             self.write_column(dataf[column], key)
 
@@ -440,7 +443,7 @@ class AuxiliaryAccessor(AccessorBase):
             return self.root[key][0].decode(), self.root[key].attrs['__FORMAT']
         raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
-    def add(self, obj, key, fmt=NULL_UTF8_FORMAT):
+    def add(self, obj, key, fmt=None):
         '''
         Add a table or UTF-8 encoded byte stream to the root group.
 
@@ -458,8 +461,10 @@ class AuxiliaryAccessor(AccessorBase):
 
         '''
         if isinstance(obj, pd.DataFrame):
-            self.add_table(obj, key)
+            fmt = fmt if fmt is not None else NULL_TABLE_FORMAT
+            self.add_table(obj, key, fmt=fmt)
         elif isinstance(obj, (str, bytes)):
+            fmt = fmt if fmt is not None else NULL_UTF8_FORMAT
             self.add_utf8(obj, key, fmt=fmt)
 
     def add_utf8(self, data, key, fmt=NULL_UTF8_FORMAT):
@@ -670,9 +675,17 @@ class TimeseriesAccessor(AccessorBase):
 
         '''
         if '__TS_INDEX' not in self.root:
-            self.add_table(self.index.astype(TS_INDEX_DTYPES), '__TS_INDEX')
+            self.add_table(
+                self.index.astype(TS_INDEX_DTYPES), 
+                '__TS_INDEX',
+                fmt='TIMESERIES_INDEX'
+                )
         else:
-            self.write_table(self.index.astype(TS_INDEX_DTYPES), '__TS_INDEX')
+            self.write_table(
+                self.index.astype(TS_INDEX_DTYPES), 
+                '__TS_INDEX',
+                fmt='TIMESERIES_INDEX'
+            )
 
     def link_tag(
         self,
@@ -717,7 +730,7 @@ class TimeseriesAccessor(AccessorBase):
 
         with h5py.File(src_file, mode='r') as file:
             accessor = TimeseriesAccessor(file, '/timeseries')
-            index = accessor.index
+            index, fmt = accessor.index
             index = index[index['tag'].str.match(src_tag)]
 
             for _, row in index.iterrows():
