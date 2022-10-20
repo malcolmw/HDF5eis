@@ -24,10 +24,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
     def test_table_io(self):
         dataf = random_table(1024)
 
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.add_table(dataf, "TEST")
             columns = np.sort(dataf.columns)
@@ -39,10 +38,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
 
     def test_float_io(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.root.create_group("TEST")
             for dtype in (np.float16, np.float32, np.float64):
@@ -62,10 +60,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
                 )
 
     def test_int_io(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.root.create_group("TEST")
             for dtype in (np.int8, np.int16, np.int32, np.int64):
@@ -90,10 +87,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
                 )
 
     def test_string_io(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.root.create_group("TEST")
             strings = random_strings(1024)
@@ -104,10 +100,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             self.assertFalse(accessor.root[handle].attrs["__IS_UTC_DATETIME64"])
 
     def test_datetime_io(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.root.create_group("TEST")
             times = random_times(1024)
@@ -122,10 +117,9 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
 
 class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
     def test_add(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, "/root")
             dataf = random_table(1024)
             accessor.add(dataf, "TEST")
@@ -140,10 +134,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             self.assertTrue(my_string == accessor["string"][0])
             
     def test_validate0(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Ensure that properly formatted tables don't raise an error.
             dataf = random_table(1024)
@@ -153,10 +146,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             
 
     def test_validate_column_length(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')        
             # Add a column with a bad length and ensure it raises a 
             # TableFormatError.
@@ -171,10 +163,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             del(accessor.root['TEST'])
     
     def test_validate_missing_is_utc_datetime64_attr(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')            
             # Delete __IS_UTC_DATETIME64 Attribute from one column and ensure
             # that TableFormatError is raised.
@@ -186,10 +177,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             del(accessor.root['TEST'])
 
     def test_validate_missing_is_utf8_attr(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Delete __IS_UTF8 Attribute from one column and ensure
             # that TableFormatError is raised.
@@ -201,10 +191,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             del(accessor.root['TEST'])
                 
     def test_validate_is_utc_datetime64_and_is_utf8_both_true(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Set __IS_UTC_DATETIME64 and __IS_UTF8 Attributes both to True and
             # ensure that TableFormatError is raised.
@@ -218,10 +207,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             
             
     def test_validate_is_utc_datetime64_true_wrong_dtype(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Set __IS_UTC_DATETIME64 to True for a column with the wrong dtype
             # ensure that TableFormatError is raised.
@@ -233,10 +221,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             del(accessor.root['TEST'])
 
     def test_validate_is_utf8_true_wrong_dtype(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Set __IS_UTF8 to True for a column with the wrong dtype
             # ensure that TableFormatError is raised.
@@ -248,10 +235,9 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             del(accessor.root['TEST'])
             
     def test_validate_utf8_string_wrong_dtype(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Create a DataSet with __TYPE == UTF-8 but an invalid dtype and
             # ensure a UTF8FormatError is raised.
@@ -318,10 +304,9 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
         
             
     def test_add_float(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
             shape = (8, 8, 3, 500)
             now = pd.Timestamp.now(tz="UTC")
@@ -340,10 +325,9 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
                 self.assertTrue(np.all(data_in == data_out.astype(dtype)))
 
     def test_add_int(self):
-        with (
-                tempfile.TemporaryFile() as tmp_file, 
-                h5py.File(tmp_file, mode="w") as file
-        ):
+        with tempfile.TemporaryFile() as tmp_file, \
+             h5py.File(tmp_file, mode="w") as file \
+        :
             accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
             shape = (8, 8, 3, 500)
             now = pd.Timestamp.now(tz="UTC")
