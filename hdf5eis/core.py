@@ -164,7 +164,7 @@ class File(h5py.File):
         KeyError
             Raises KeyError if an Group other than /metadata, /products,
             or /timeseries is found in file.
-        
+
         Returns
         -------
         None.
@@ -173,7 +173,7 @@ class File(h5py.File):
         for key in self:
             if key not in ('metadata', 'products', 'timeseries'):
                 raise KeyError(f'Invalid Group(={key}) found in file.')
-                
+
     def _validate_accessors(self):
         '''
         Validate /metadata and /products Groups.
@@ -324,16 +324,16 @@ class AccessorBase:
             if group[column].attrs['__IS_UTC_DATETIME64'] is np.bool_(True):
                 dataf[column] = pd.to_datetime(dataf[column], utc=True)
             elif group[column].attrs['__IS_UTF8'] is np.bool_(True):
-                dataf[column] = dataf[column].str.decode('UTF-8')
+                dataf[column] = dataf[column].str.decode('utf-8')
         fmt = group.attrs['__FORMAT']
 
         return dataf, fmt
-    
-    
+
+
     def validate(self):
         self.validate_tables()
-        
-    
+
+
     def validate_tables(self):
         for name in self.list_tables():
             _validate_table(self.root[name])
@@ -387,7 +387,7 @@ class AccessorBase:
         is_utc_datetime64 = pd.api.types.is_datetime64_any_dtype(column)
         if (
             (
-                hasattr(column.dtype, 'char') 
+                hasattr(column.dtype, 'char')
                 and
                 column.dtype.char == np.dtype('S')
             )
@@ -410,7 +410,7 @@ class AccessorBase:
 
         values = column.values
         datas = self.root[key].create_dataset(
-            column.name, 
+            column.name,
             data=values.astype(STRING_DTYPE) if is_utf8 else values
         )
         datas.attrs['__IS_UTC_DATETIME64'] = is_utc_datetime64
@@ -440,7 +440,7 @@ class AuxiliaryAccessor(AccessorBase):
         if dtype == 'TABLE':
             return self.read_table(key)
         if dtype == 'UTF-8':
-            return self.root[key][0].decode(), self.root[key].attrs['__FORMAT']
+            return self.root[key][0].decode('utf-8'), self.root[key].attrs['__FORMAT']
         raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
     def add(self, obj, key, fmt=None):
@@ -484,7 +484,7 @@ class AuxiliaryAccessor(AccessorBase):
 
         '''
         self.root.create_dataset(
-            key, data=[data], dtype=STRING_DTYPE
+            key, data=[data.encode('utf-8')], dtype=STRING_DTYPE
         )
         self.root[key].attrs['__TYPE'] = 'UTF-8'
         self.root[key].attrs['__FORMAT'] = fmt
@@ -512,7 +512,7 @@ class AuxiliaryAccessor(AccessorBase):
         '''
         self.root[key] = h5py.ExternalLink(src_file, src_path)
 
-    
+
     def list_utf8(self):
         '''
         Return a list of all UTF-8 encoded strings below root.
@@ -529,11 +529,11 @@ class AuxiliaryAccessor(AccessorBase):
                 names.append(name)
         self.root.visititems(is_utf8)
         return names
-    
+
     def validate(self):
         self.validate_tables()
         self.validate_utf8()
-    
+
     def validate_utf8(self):
         for name in self.list_utf8():
             dtype = self.root[name].dtype
@@ -547,7 +547,7 @@ class AuxiliaryAccessor(AccessorBase):
                 ))
 
 
-            
+
 
 class TimeseriesAccessor(AccessorBase):
     '''
@@ -676,13 +676,13 @@ class TimeseriesAccessor(AccessorBase):
         '''
         if '__TS_INDEX' not in self.root:
             self.add_table(
-                self.index.astype(TS_INDEX_DTYPES), 
+                self.index.astype(TS_INDEX_DTYPES),
                 '__TS_INDEX',
                 fmt='TIMESERIES_INDEX'
                 )
         else:
             self.write_table(
-                self.index.astype(TS_INDEX_DTYPES), 
+                self.index.astype(TS_INDEX_DTYPES),
                 '__TS_INDEX',
                 fmt='TIMESERIES_INDEX'
             )
@@ -970,7 +970,7 @@ class TimeseriesAccessor(AccessorBase):
         index = index.sort_values('start_time')
 
         sampling_interval = pd.to_timedelta(
-            1 / index['sampling_rate'], 
+            1 / index['sampling_rate'],
             unit='S'
         )
         delta = index['start_time'] - index.shift(1)['end_time']
@@ -979,7 +979,7 @@ class TimeseriesAccessor(AccessorBase):
         index = index.set_index('segment_id')
 
         return index
-    
+
     def validate(self):
         self.validate_tables()
         self._validate_ts_index()
@@ -991,7 +991,7 @@ class TimeseriesAccessor(AccessorBase):
         Raises
         ------
         exceptions.TSIndexError
-            Raises TSIndexError if their is a mismatch between 
+            Raises TSIndexError if their is a mismatch between
             the __TS_INDEX table and timeseries data.
 
         Returns
@@ -1040,7 +1040,7 @@ def determine_segment_sample_range(rows, start_time, end_time):
     |-----|-----|-----|-----|-----|-----|
              A                 B
     |-----X-----X-----X-----X-----X-----|
-    
+
     Samples X are returned for start_time=A, end_time=B.
     '''
     sampling_rate = rows.iloc[0]['sampling_rate']
@@ -1249,7 +1249,7 @@ def _validate_table(group):
         for i in range(len(columns)):
             msg += f'\n{columns[i]}: {lengths[i]}'
         raise exceptions.TableFormatError(msg)
-        
+
     # Check for existence and compatibility of __IS_UTC_DATETIME64 and
     # __IS_UTF8 tags.
     for column in columns:
@@ -1275,7 +1275,7 @@ def _validate_table(group):
                 f'__IS_UTC_DATETIME64 and __IS_UTF8 Attributes are both True '
                 f'for \'{column}\' column of \'{group.name}\' table.'
             ))
-    
+
     # Verify that __IS_UTC_DATETIME64 columns are 64-bit integers.
     for column in columns:
         # Don't check the __INDEX column because it has different requirements.
