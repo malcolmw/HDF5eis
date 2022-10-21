@@ -30,7 +30,7 @@ TS_INDEX_DTYPES = {
 }
 COMPATIBLE_VERSIONS = ['0.1.0']
 
-if sys.platform == 'linux':
+if sys.platform in ('darwin', 'linux'):
     UTF8_DECODER = np.vectorize(lambda x: x.decode('UTF-8'))
 elif sys.platform == 'win32':
     UTF8_DECODER = lambda x: x
