@@ -30,7 +30,6 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             accessor = hdf5eis.core.AccessorBase(file, "/root")
             accessor.add_table(dataf, "TEST")
             columns = np.sort(dataf.columns)
-            dataf["string"]= dataf["string"].str.decode("UTF-8")
             table, fmt = accessor.read_table("TEST")
             self.assertTrue(np.all(
                 dataf[columns] == table[columns]
@@ -95,7 +94,11 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             strings = random_strings(1024)
             accessor.write_column(strings, "TEST")
             handle = "TEST/string"
-            self.assertTrue(np.all(strings == pd.Series(accessor.root[handle][:])))
+            self.assertTrue(np.all(
+                strings
+                ==
+                pd.Series(accessor.root[handle][:]).str.decode('utf-8')
+            ))
             self.assertTrue(accessor.root[handle].attrs["__IS_UTF8"])
             self.assertFalse(accessor.root[handle].attrs["__IS_UTC_DATETIME64"])
 
@@ -123,7 +126,6 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             accessor = hdf5eis.core.AuxiliaryAccessor(file, "/root")
             dataf = random_table(1024)
             accessor.add(dataf, "TEST")
-            dataf["string"] = dataf["string"].str.decode("UTF-8")
             columns = np.sort(dataf.columns)
             table, fmt = accessor["TEST"]
             self.assertTrue(
@@ -132,7 +134,7 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             my_string = random_string(max_length=8192)
             accessor.add(my_string, "string")
             self.assertTrue(my_string == accessor["string"][0])
-            
+
     def test_validate0(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
@@ -143,30 +145,30 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             accessor.add(dataf, 'TEST')
             accessor.validate()
             del(accessor.root['TEST'])
-            
+
 
     def test_validate_column_length(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
         :
-            accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')        
-            # Add a column with a bad length and ensure it raises a 
+            accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
+            # Add a column with a bad length and ensure it raises a
             # TableFormatError.
             dataf = random_table(1024)
             accessor.add(dataf, 'TEST')
             accessor.root.create_dataset(
-                'TEST/Bad Column', 
+                'TEST/Bad Column',
                 data=np.random.rand(1025)
             )
             with self.assertRaises(hdf5eis.exceptions.TableFormatError):
                 accessor.validate()
             del(accessor.root['TEST'])
-    
+
     def test_validate_missing_is_utc_datetime64_attr(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
         :
-            accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')            
+            accessor = hdf5eis.core.AuxiliaryAccessor(file, '/root')
             # Delete __IS_UTC_DATETIME64 Attribute from one column and ensure
             # that TableFormatError is raised.
             dataf = random_table(1024)
@@ -189,7 +191,7 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             with self.assertRaises(hdf5eis.exceptions.TableFormatError):
                 accessor.validate()
             del(accessor.root['TEST'])
-                
+
     def test_validate_is_utc_datetime64_and_is_utf8_both_true(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
@@ -204,8 +206,8 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             with self.assertRaises(hdf5eis.exceptions.TableFormatError):
                 accessor.validate()
             del(accessor.root['TEST'])
-            
-            
+
+
     def test_validate_is_utc_datetime64_true_wrong_dtype(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
@@ -233,7 +235,7 @@ class TestAuxiliaryAccessorClassMethods(unittest.TestCase):
             with self.assertRaises(hdf5eis.exceptions.TableFormatError):
                 accessor.validate()
             del(accessor.root['TEST'])
-            
+
     def test_validate_utf8_string_wrong_dtype(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
@@ -276,21 +278,21 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
                 accessor = hdf5eis.core.TimeseriesAccessor(file, "/timeseries")
                 accessor.link_tag(path1, "file1")
                 accessor.link_tag(
-                    path2, 
-                    "file2", 
-                    prefix="prefix", 
+                    path2,
+                    "file2",
+                    prefix="prefix",
                     suffix="suffix"
                 )
                 accessor.link_tag(path3, "file3", new_tag="FILE3")
                 accessor.link_tag(
-                    path4, 
-                    "file4", 
-                    new_tag="FILE4", 
+                    path4,
+                    "file4",
+                    new_tag="FILE4",
                     prefix="prefix"
                 )
                 self.assertEqual(accessor.index.loc[0, "tag"], "file1")
                 self.assertEqual(
-                    accessor.index.loc[1, "tag"], 
+                    accessor.index.loc[1, "tag"],
                     "prefix/file2/suffix"
                 )
                 self.assertEqual(accessor.index.loc[2, "tag"], "FILE3")
@@ -299,10 +301,10 @@ class TestTimeseriesAccessorClassMethods(unittest.TestCase):
                 _ = accessor["prefix/file2/suffix", :, :, :, now:now+delta*500]
                 _ = accessor["FILE3", :, :, :, now:now+delta*500]
                 _ = accessor["FILE4", :, :, :, now:now+delta*500]
-                    
-            
-        
-            
+
+
+
+
     def test_add_float(self):
         with tempfile.TemporaryFile() as tmp_file, \
              h5py.File(tmp_file, mode="w") as file \
@@ -363,7 +365,7 @@ def random_strings(nstrings):
     return pd.Series(
         [random_string() for i in range(nstrings)],
         name="string"
-    ).astype(np.dtype("S"))
+    )
 
 
 def random_table(nrows):
