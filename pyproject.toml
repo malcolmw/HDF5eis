@@ -1,0 +1,18 @@
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'HDF5eis'
+version = '0.1.0a1'
+authors = [
+    {name='Malcolm C. A. White', email='malcolmw@mit.edu'}
+]
+description = 'A solution for handling big, multidimensional timeseries data from environmental sensors in HPC applications.'
+readme = 'README.md'
+requires-python = '>=3.6'
+classifiers = [
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: OS Independent'
+]

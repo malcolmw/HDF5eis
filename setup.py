@@ -13,9 +13,9 @@ else:
 def configure():
 # Initialize the setup kwargs
     kwargs = {
-            "name": "hdf5eis",
+            "name": "HDF5eis",
             "version": version,
-            "author": "Malcolm White",
+            "author": "Malcolm C. A. White",
             "author_email": "malcolmw@mit.edu",
             "maintainer": "Malcolm C. A. White",
             "maintainer_email": "malcolmw@mit.edu",
