@@ -97,7 +97,7 @@ class TestAccessorBaseClassMethods(unittest.TestCase):
             self.assertTrue(np.all(
                 strings
                 ==
-                pd.Series(accessor.root[handle][:]).str.decode('utf-8')
+                hdf5eis.core.UTF8_DECODER(pd.Series(accessor.root[handle][:]))
             ))
             self.assertTrue(accessor.root[handle].attrs["__IS_UTF8"])
             self.assertFalse(accessor.root[handle].attrs["__IS_UTC_DATETIME64"])
