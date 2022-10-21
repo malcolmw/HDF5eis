@@ -4,6 +4,7 @@ Core functionality for HDF5eis provided by the hdf5eis.File class.
 # Standard library imports
 import pathlib
 import re
+import sys
 import warnings
 
 # Third party imports
@@ -28,6 +29,13 @@ TS_INDEX_DTYPES = {
     'npts': np.int64,
 }
 COMPATIBLE_VERSIONS = ['0.1.0']
+
+if sys.platform == 'linux':
+    UTF8_DECODER = np.vectorize(lambda x: x.decode('UTF-8'))
+elif sys.platform == 'win32':
+    UTF8_DECODER = lambda x: x
+else:
+    raise NotImplementedError
 
 
 class File(h5py.File):
@@ -324,7 +332,7 @@ class AccessorBase:
             if group[column].attrs['__IS_UTC_DATETIME64'] is np.bool_(True):
                 dataf[column] = pd.to_datetime(dataf[column], utc=True)
             elif group[column].attrs['__IS_UTF8'] is np.bool_(True):
-                dataf[column] = dataf[column].str.decode('utf-8')
+                dataf[column] = UTF8_DECODER(dataf[column])
         fmt = group.attrs['__FORMAT']
 
         return dataf, fmt
@@ -440,7 +448,7 @@ class AuxiliaryAccessor(AccessorBase):
         if dtype == 'TABLE':
             return self.read_table(key)
         if dtype == 'UTF-8':
-            return self.root[key][0].decode('utf-8'), self.root[key].attrs['__FORMAT']
+            return UTF8_DECODER(self.root[key][0]), self.root[key].attrs['__FORMAT']
         raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
     def add(self, obj, key, fmt=None):
