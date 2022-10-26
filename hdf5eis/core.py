@@ -1089,7 +1089,10 @@ def get_shape(shape, key):
 
     '''
     new_shape = tuple()
-    imax = len(shape) if Ellipsis not in key else key.index(Ellipsis)
+    try:
+        imax = key.index(Ellipsis)
+    except ValueError:
+        imax = len(shape)
     new_shape = tuple((get_slice_length(key[i], shape[i]) for i in range(imax)))
     if imax < len(shape):
         new_shape += shape[imax : imax + len(shape) - len(key) + 1]
@@ -1123,14 +1126,16 @@ def get_slice_length(obj, max_len):
         The length of the slice.
 
     '''
-    if obj == slice(None):
-        return max_len
     if isinstance(obj, slice):
+        if obj == slice(None):
+            return max_len
         istart = 0 if obj.start is None else obj.start
         iend = max_len if obj.stop is None else obj.stop
         return iend - istart
     if isinstance(obj, int):
         return 0
+    if isinstance(obj, (list, tuple, np.ndarray)):
+        return len(obj)
     raise ValueError
 
 
