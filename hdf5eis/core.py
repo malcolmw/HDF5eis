@@ -28,7 +28,10 @@ TS_INDEX_DTYPES = {
     'sampling_rate': np.float32,
     'npts': np.int64,
 }
-COMPATIBLE_VERSIONS = ['0.1.0']
+COMPATIBLE_VERSIONS = [
+    '0.1.0',
+    '0.1.1pre'
+]
 
 if sys.platform in ('darwin', 'linux'):
     UTF8_DECODER = np.vectorize(lambda x: x.decode('UTF-8'))

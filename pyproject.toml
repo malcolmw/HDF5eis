@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'HDF5eis'
-version = '0.1.0a1'
+version = '0.1.1pre'
 authors = [
     {name='Malcolm C. A. White', email='malcolmw@mit.edu'}
 ]
