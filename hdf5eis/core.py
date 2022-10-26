@@ -451,7 +451,7 @@ class AuxiliaryAccessor(AccessorBase):
         if dtype == 'TABLE':
             return self.read_table(key)
         if dtype == 'UTF-8':
-            return UTF8_DECODER(self.root[key][0]), self.root[key].attrs['__FORMAT']
+            return str(UTF8_DECODER(self.root[key][0])), self.root[key].attrs['__FORMAT']
         raise HDF5eisFileFormatError(f'Unknown data type {dtype} for key {key}.')
 
     def add(self, obj, key, fmt=None):
@@ -494,8 +494,14 @@ class AuxiliaryAccessor(AccessorBase):
         None.
 
         '''
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        elif isinstance(data, bytes):
+            pass
+        else:
+            raise TypeError(f'Data must be str or bytes object. Got {type(data)}')
         self.root.create_dataset(
-            key, data=[data.encode('utf-8')], dtype=STRING_DTYPE
+            key, data=[data], dtype=STRING_DTYPE
         )
         self.root[key].attrs['__TYPE'] = 'UTF-8'
         self.root[key].attrs['__FORMAT'] = fmt
