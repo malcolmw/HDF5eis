@@ -30,7 +30,9 @@ TS_INDEX_DTYPES = {
 }
 COMPATIBLE_VERSIONS = [
     '0.1.0',
-    '0.1.1pre'
+    '0.1.1pre',
+    '0.1.1pre1',
+    '0.1.1pre2'
 ]
 
 if sys.platform in ('darwin', 'linux'):
