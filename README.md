@@ -32,3 +32,8 @@ with hdf5eis.File("demo.hdf5", mode="w") as demo_file:
 ```bash
 >$ pip install hdf5eis
 ```
+
+# Credit
+Please cite White et al. (2023) if you make use of HDF5eis in published work.
+
+White, M.C.A., Zhang, Z., Bai, T., Qiu, H., Chang, H., and Nakata, N., 2023, HDF5eis: A storage and input/output solution for big multidimensional time series data from environmental sensors: *GEOPHYSICS*, v. 88, p. F29–F38, [doi:10.1190/geo2022-0448.1](https://library.seg.org/doi/10.1190/geo2022-0448.1).
